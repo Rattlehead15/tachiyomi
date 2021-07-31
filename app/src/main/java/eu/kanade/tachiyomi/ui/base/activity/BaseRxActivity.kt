@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.base.activity
 
+import android.content.Context
 import android.os.Bundle
 import androidx.viewbinding.ViewBinding
 import eu.kanade.tachiyomi.ui.base.presenter.BasePresenter
@@ -14,9 +15,8 @@ abstract class BaseRxActivity<VB : ViewBinding, P : BasePresenter<*>> : NucleusA
 
     lateinit var binding: VB
 
-    init {
-        @Suppress("LeakingThis")
-        LocaleHelper.updateConfiguration(this)
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.createLocaleWrapper(newBase))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

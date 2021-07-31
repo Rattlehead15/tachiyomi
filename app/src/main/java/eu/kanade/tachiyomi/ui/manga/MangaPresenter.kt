@@ -1,8 +1,12 @@
 package eu.kanade.tachiyomi.ui.manga
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import coil.imageLoader
+import coil.memory.MemoryCache
 import com.jakewharton.rxrelay.PublishRelay
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.database.DatabaseHelper
@@ -10,28 +14,42 @@ import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.models.MangaCategory
+import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.database.models.toMangaInfo
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.track.EnhancedTrackService
 import eu.kanade.tachiyomi.data.track.TrackManager
+import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.source.LocalSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.toSChapter
 import eu.kanade.tachiyomi.source.model.toSManga
 import eu.kanade.tachiyomi.ui.base.presenter.BasePresenter
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
+import eu.kanade.tachiyomi.ui.manga.track.TrackItem
 import eu.kanade.tachiyomi.util.chapter.ChapterSettingsHelper
+import eu.kanade.tachiyomi.util.chapter.getChapterSort
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
+import eu.kanade.tachiyomi.util.chapter.syncChaptersWithTrackServiceTwoWay
 import eu.kanade.tachiyomi.util.isLocal
 import eu.kanade.tachiyomi.util.lang.launchIO
 import eu.kanade.tachiyomi.util.lang.withUIContext
 import eu.kanade.tachiyomi.util.prepUpdateCover
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.shouldDownloadNewChapters
+import eu.kanade.tachiyomi.util.storage.DiskUtil
+import eu.kanade.tachiyomi.util.storage.getPicturesDir
+import eu.kanade.tachiyomi.util.storage.getTempShareDir
+import eu.kanade.tachiyomi.util.system.ImageUtil
+import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.updateCoverLastModified
 import eu.kanade.tachiyomi.widget.ExtendedNavigationView.Item.TriStateGroup.State
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.supervisorScope
 import rx.Observable
 import rx.Subscription
 import rx.android.schedulers.AndroidSchedulers
@@ -39,6 +57,7 @@ import rx.schedulers.Schedulers
 import timber.log.Timber
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.File
 import java.util.Date
 
 class MangaPresenter(
@@ -56,10 +75,9 @@ class MangaPresenter(
      */
     private var fetchMangaJob: Job? = null
 
-    /**
-     * List of chapters of the manga. It's always unfiltered and unsorted.
-     */
-    var chapters: List<ChapterItem> = emptyList()
+    var allChapters: List<ChapterItem> = emptyList()
+        private set
+    var filteredAndSortedChapters: List<ChapterItem> = emptyList()
         private set
 
     /**
@@ -86,6 +104,15 @@ class MangaPresenter(
     private var observeDownloadsStatusSubscription: Subscription? = null
     private var observeDownloadsPageSubscription: Subscription? = null
 
+    private var _trackList: List<TrackItem> = emptyList()
+    val trackList get() = _trackList
+
+    private val loggedServices by lazy { trackManager.services.filter { it.isLogged } }
+
+    private var trackSubscription: Subscription? = null
+    private var searchTrackerJob: Job? = null
+    private var refreshTrackersJob: Job? = null
+
     override fun onCreate(savedState: Bundle?) {
         super.onCreate(savedState)
 
@@ -106,7 +133,13 @@ class MangaPresenter(
         // Prepare the relay.
         chaptersRelay.flatMap { applyChapterFilters(it) }
             .observeOn(AndroidSchedulers.mainThread())
-            .subscribeLatestCache(MangaController::onNextChapters) { _, error -> Timber.e(error) }
+            .subscribeLatestCache(
+                { _, chapters ->
+                    filteredAndSortedChapters = chapters
+                    view?.onNextChapters(chapters)
+                },
+                { _, error -> Timber.e(error) }
+            )
 
         // Manga info - end
 
@@ -125,7 +158,7 @@ class MangaPresenter(
                     setDownloadedChapters(chapters)
 
                     // Store the last emission
-                    this.chapters = chapters
+                    this.allChapters = chapters
 
                     // Listen for download status changes
                     observeDownloads()
@@ -134,6 +167,8 @@ class MangaPresenter(
         )
 
         // Chapters list - end
+
+        fetchTrackers()
     }
 
     // Manga info - start
@@ -250,6 +285,89 @@ class MangaPresenter(
     }
 
     /**
+     * Get the manga cover as a Bitmap, either from the CoverCache (only works for library manga)
+     * or from the Coil ImageLoader cache.
+     *
+     * @param context the context used to get the Coil ImageLoader
+     * @param memoryCacheKey Coil MemoryCache.Key that points to the cover Bitmap cache location
+     * @return manga cover as Bitmap
+     */
+    fun getCoverBitmap(context: Context, memoryCacheKey: MemoryCache.Key?): Bitmap {
+        var resultBitmap = coverBitmapFromCoverCache()
+        if (resultBitmap == null && memoryCacheKey != null) {
+            resultBitmap = coverBitmapFromImageLoader(context, memoryCacheKey)
+        }
+
+        return resultBitmap ?: throw Exception("Cover not in cache")
+    }
+
+    /**
+     * Attempt manga cover retrieval from the CoverCache.
+     *
+     * @return cover as Bitmap or null if CoverCache does not contain cover for manga
+     */
+    private fun coverBitmapFromCoverCache(): Bitmap? {
+        val cover = coverCache.getCoverFile(manga)
+        return if (cover != null) {
+            BitmapFactory.decodeFile(cover.path)
+        } else {
+            null
+        }
+    }
+
+    /**
+     * Attempt manga cover retrieval from the Coil ImageLoader memoryCache.
+     *
+     * @param context the context used to get the Coil ImageLoader
+     * @param memoryCacheKey Coil MemoryCache.Key that points to the cover Bitmap cache location
+     * @return cover as Bitmap or null if there is no thumbnail cached with the memoryCacheKey
+     */
+    private fun coverBitmapFromImageLoader(context: Context, memoryCacheKey: MemoryCache.Key): Bitmap? {
+        return context.imageLoader.memoryCache[memoryCacheKey]
+    }
+
+    /**
+     * Save manga cover Bitmap to temporary share directory.
+     *
+     * @param context for the temporary share directory
+     * @param coverBitmap the cover to save (as Bitmap)
+     * @return cover File in temporary share directory
+     */
+    fun shareCover(context: Context, coverBitmap: Bitmap): File {
+        return saveCover(getTempShareDir(context), coverBitmap)
+    }
+
+    /**
+     * Save manga cover to pictures directory of the device.
+     *
+     * @param context for the pictures directory of the user
+     * @param coverBitmap the cover to save (as Bitmap)
+     * @return cover File in pictures directory
+     */
+    fun saveCover(context: Context, coverBitmap: Bitmap) {
+        saveCover(getPicturesDir(context), coverBitmap)
+    }
+
+    /**
+     * Save a manga cover Bitmap to a new File in a given directory.
+     * Overwrites file if it already exists.
+     *
+     * @param directory The directory in which the new file will be created
+     * @param coverBitmap The manga cover to save
+     * @return the newly created File
+     */
+    private fun saveCover(directory: File, coverBitmap: Bitmap): File {
+        directory.mkdirs()
+        val filename = DiskUtil.buildValidFilename("${manga.title}.${ImageUtil.ImageType.PNG}")
+
+        val destFile = File(directory, filename)
+        destFile.outputStream().use { desFileOutputStream ->
+            coverBitmap.compress(Bitmap.CompressFormat.PNG, 100, desFileOutputStream)
+        }
+        return destFile
+    }
+
+    /**
      * Update cover with local file.
      *
      * @param manga the manga edited.
@@ -266,6 +384,7 @@ class MangaPresenter(
                     } else if (manga.favorite) {
                         coverCache.setCustomCoverToCache(manga, it)
                         manga.updateCoverLastModified(db)
+                        coverCache.clearMemoryCache()
                     }
                 }
             }
@@ -282,6 +401,7 @@ class MangaPresenter(
             .fromCallable {
                 coverCache.deleteCustomCover(manga)
                 manga.updateCoverLastModified(db)
+                coverCache.clearMemoryCache()
             }
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
@@ -298,17 +418,26 @@ class MangaPresenter(
     private fun observeDownloads() {
         observeDownloadsStatusSubscription?.let { remove(it) }
         observeDownloadsStatusSubscription = downloadManager.queue.getStatusObservable()
-            .observeOn(AndroidSchedulers.mainThread())
+            .observeOn(Schedulers.io())
+            .onBackpressureBuffer()
             .filter { download -> download.manga.id == manga.id }
-            .doOnNext { onDownloadStatusChange(it) }
-            .subscribeLatestCache(MangaController::onChapterDownloadUpdate) { _, error ->
-                Timber.e(error)
-            }
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribeLatestCache(
+                { view, it ->
+                    onDownloadStatusChange(it)
+                    view.onChapterDownloadUpdate(it)
+                },
+                { _, error ->
+                    Timber.e(error)
+                }
+            )
 
         observeDownloadsPageSubscription?.let { remove(it) }
         observeDownloadsPageSubscription = downloadManager.queue.getProgressObservable()
-            .observeOn(AndroidSchedulers.mainThread())
+            .observeOn(Schedulers.io())
+            .onBackpressureBuffer()
             .filter { download -> download.manga.id == manga.id }
+            .observeOn(AndroidSchedulers.mainThread())
             .subscribeLatestCache(MangaController::onChapterDownloadUpdate) { _, error ->
                 Timber.e(error)
             }
@@ -370,7 +499,7 @@ class MangaPresenter(
      * Updates the UI after applying the filters.
      */
     private fun refreshChapters() {
-        chaptersRelay.call(chapters)
+        chaptersRelay.call(allChapters)
     }
 
     /**
@@ -402,23 +531,7 @@ class MangaPresenter(
             observable = observable.filter { !it.bookmark }
         }
 
-        val sortFunction: (Chapter, Chapter) -> Int = when (manga.sorting) {
-            Manga.SORTING_SOURCE -> when (sortDescending()) {
-                true -> { c1, c2 -> c1.source_order.compareTo(c2.source_order) }
-                false -> { c1, c2 -> c2.source_order.compareTo(c1.source_order) }
-            }
-            Manga.SORTING_NUMBER -> when (sortDescending()) {
-                true -> { c1, c2 -> c2.chapter_number.compareTo(c1.chapter_number) }
-                false -> { c1, c2 -> c1.chapter_number.compareTo(c2.chapter_number) }
-            }
-            Manga.SORTING_UPLOAD_DATE -> when (sortDescending()) {
-                true -> { c1, c2 -> c2.date_upload.compareTo(c1.date_upload) }
-                false -> { c1, c2 -> c1.date_upload.compareTo(c2.date_upload) }
-            }
-            else -> throw NotImplementedError("Unimplemented sorting method")
-        }
-
-        return observable.toSortedList(sortFunction)
+        return observable.toSortedList(getChapterSort(manga))
     }
 
     /**
@@ -428,7 +541,7 @@ class MangaPresenter(
     private fun onDownloadStatusChange(download: Download) {
         // Assign the download to the model object.
         if (download.status == Download.State.QUEUE) {
-            chapters.find { it.id == download.chapter.id }?.let {
+            allChapters.find { it.id == download.chapter.id }?.let {
                 if (it.download == null) {
                     it.download = download
                 }
@@ -445,7 +558,27 @@ class MangaPresenter(
      * Returns the next unread chapter or null if everything is read.
      */
     fun getNextUnreadChapter(): ChapterItem? {
-        return chapters.sortedByDescending { it.source_order }.find { !it.read }
+        return if (sortDescending()) {
+            return filteredAndSortedChapters.findLast { !it.read }
+        } else {
+            filteredAndSortedChapters.find { !it.read }
+        }
+    }
+
+    fun getUnreadChaptersSorted(): List<ChapterItem> {
+        val chapters = allChapters
+            .sortedWith(getChapterSort(manga))
+            .filter { !it.read && it.status == Download.State.NOT_DOWNLOADED }
+            .distinctBy { it.name }
+        return if (sortDescending()) {
+            chapters.reversed()
+        } else {
+            chapters
+        }
+    }
+
+    fun startDownloadingNow(chapter: Chapter) {
+        downloadManager.startDownloadNow(chapter)
     }
 
     /**
@@ -466,7 +599,7 @@ class MangaPresenter(
             db.updateChaptersProgress(chapters).executeAsBlocking()
 
             if (preferences.removeAfterMarkedAsRead()) {
-                deleteChapters(chapters)
+                deleteChapters(chapters.filter { it.read })
             }
         }
     }
@@ -528,8 +661,8 @@ class MangaPresenter(
      * Reverses the sorting and requests an UI update.
      */
     fun reverseSortOrder() {
-        manga.setChapterOrder(if (sortDescending()) Manga.SORT_ASC else Manga.SORT_DESC)
-        db.updateFlags(manga).executeAsBlocking()
+        manga.setChapterOrder(if (sortDescending()) Manga.CHAPTER_SORT_ASC else Manga.CHAPTER_SORT_DESC)
+        db.updateChapterFlags(manga).executeAsBlocking()
         refreshChapters()
     }
 
@@ -540,10 +673,10 @@ class MangaPresenter(
     fun setUnreadFilter(state: State) {
         manga.readFilter = when (state) {
             State.IGNORE -> Manga.SHOW_ALL
-            State.INCLUDE -> Manga.SHOW_UNREAD
-            State.EXCLUDE -> Manga.SHOW_READ
+            State.INCLUDE -> Manga.CHAPTER_SHOW_UNREAD
+            State.EXCLUDE -> Manga.CHAPTER_SHOW_READ
         }
-        db.updateFlags(manga).executeAsBlocking()
+        db.updateChapterFlags(manga).executeAsBlocking()
         refreshChapters()
     }
 
@@ -554,10 +687,10 @@ class MangaPresenter(
     fun setDownloadedFilter(state: State) {
         manga.downloadedFilter = when (state) {
             State.IGNORE -> Manga.SHOW_ALL
-            State.INCLUDE -> Manga.SHOW_DOWNLOADED
-            State.EXCLUDE -> Manga.SHOW_NOT_DOWNLOADED
+            State.INCLUDE -> Manga.CHAPTER_SHOW_DOWNLOADED
+            State.EXCLUDE -> Manga.CHAPTER_SHOW_NOT_DOWNLOADED
         }
-        db.updateFlags(manga).executeAsBlocking()
+        db.updateChapterFlags(manga).executeAsBlocking()
         refreshChapters()
     }
 
@@ -568,10 +701,10 @@ class MangaPresenter(
     fun setBookmarkedFilter(state: State) {
         manga.bookmarkedFilter = when (state) {
             State.IGNORE -> Manga.SHOW_ALL
-            State.INCLUDE -> Manga.SHOW_BOOKMARKED
-            State.EXCLUDE -> Manga.SHOW_NOT_BOOKMARKED
+            State.INCLUDE -> Manga.CHAPTER_SHOW_BOOKMARKED
+            State.EXCLUDE -> Manga.CHAPTER_SHOW_NOT_BOOKMARKED
         }
-        db.updateFlags(manga).executeAsBlocking()
+        db.updateChapterFlags(manga).executeAsBlocking()
         refreshChapters()
     }
 
@@ -581,7 +714,7 @@ class MangaPresenter(
      */
     fun setDisplayMode(mode: Int) {
         manga.displayMode = mode
-        db.updateFlags(manga).executeAsBlocking()
+        db.updateChapterFlags(manga).executeAsBlocking()
     }
 
     /**
@@ -590,7 +723,7 @@ class MangaPresenter(
      */
     fun setSorting(sort: Int) {
         manga.sorting = sort
-        db.updateFlags(manga).executeAsBlocking()
+        db.updateChapterFlags(manga).executeAsBlocking()
         refreshChapters()
     }
 
@@ -609,8 +742,8 @@ class MangaPresenter(
             return State.INCLUDE
         }
         return when (manga.downloadedFilter) {
-            Manga.SHOW_DOWNLOADED -> State.INCLUDE
-            Manga.SHOW_NOT_DOWNLOADED -> State.EXCLUDE
+            Manga.CHAPTER_SHOW_DOWNLOADED -> State.INCLUDE
+            Manga.CHAPTER_SHOW_NOT_DOWNLOADED -> State.EXCLUDE
             else -> State.IGNORE
         }
     }
@@ -620,8 +753,8 @@ class MangaPresenter(
      */
     fun onlyBookmarked(): State {
         return when (manga.bookmarkedFilter) {
-            Manga.SHOW_BOOKMARKED -> State.INCLUDE
-            Manga.SHOW_NOT_BOOKMARKED -> State.EXCLUDE
+            Manga.CHAPTER_SHOW_BOOKMARKED -> State.INCLUDE
+            Manga.CHAPTER_SHOW_NOT_BOOKMARKED -> State.EXCLUDE
             else -> State.IGNORE
         }
     }
@@ -631,8 +764,8 @@ class MangaPresenter(
      */
     fun onlyUnread(): State {
         return when (manga.readFilter) {
-            Manga.SHOW_UNREAD -> State.INCLUDE
-            Manga.SHOW_READ -> State.EXCLUDE
+            Manga.CHAPTER_SHOW_UNREAD -> State.INCLUDE
+            Manga.CHAPTER_SHOW_READ -> State.EXCLUDE
             else -> State.IGNORE
         }
     }
@@ -645,4 +778,140 @@ class MangaPresenter(
     }
 
     // Chapters list - end
+
+    // Track sheet - start
+
+    private fun fetchTrackers() {
+        trackSubscription?.let { remove(it) }
+        trackSubscription = db.getTracks(manga)
+            .asRxObservable()
+            .map { tracks ->
+                loggedServices.map { service ->
+                    TrackItem(tracks.find { it.sync_id == service.id }, service)
+                }
+            }
+            .observeOn(AndroidSchedulers.mainThread())
+            .doOnNext { _trackList = it }
+            .subscribeLatestCache(MangaController::onNextTrackers)
+    }
+
+    fun refreshTrackers() {
+        refreshTrackersJob?.cancel()
+        refreshTrackersJob = launchIO {
+            supervisorScope {
+                try {
+                    trackList
+                        .filter { it.track != null }
+                        .map {
+                            async {
+                                val track = it.service.refresh(it.track!!)
+                                db.insertTrack(track).executeAsBlocking()
+
+                                if (it.service is EnhancedTrackService) {
+                                    syncChaptersWithTrackServiceTwoWay(db, allChapters, track, it.service)
+                                }
+                            }
+                        }
+                        .awaitAll()
+
+                    withUIContext { view?.onTrackingRefreshDone() }
+                } catch (e: Throwable) {
+                    withUIContext { view?.onTrackingRefreshError(e) }
+                }
+            }
+        }
+    }
+
+    fun trackingSearch(query: String, service: TrackService) {
+        searchTrackerJob?.cancel()
+        searchTrackerJob = launchIO {
+            try {
+                val results = service.search(query)
+                withUIContext { view?.onTrackingSearchResults(results) }
+            } catch (e: Throwable) {
+                withUIContext { view?.onTrackingSearchResultsError(e) }
+            }
+        }
+    }
+
+    fun registerTracking(item: Track?, service: TrackService) {
+        if (item != null) {
+            item.manga_id = manga.id!!
+            launchIO {
+                try {
+                    val hasReadChapters = allChapters.any { it.read }
+                    service.bind(item, hasReadChapters)
+                    db.insertTrack(item).executeAsBlocking()
+
+                    if (service is EnhancedTrackService) {
+                        syncChaptersWithTrackServiceTwoWay(db, allChapters, item, service)
+                    }
+                } catch (e: Throwable) {
+                    withUIContext { view?.applicationContext?.toast(e.message) }
+                }
+            }
+        } else {
+            unregisterTracking(service)
+        }
+    }
+
+    fun unregisterTracking(service: TrackService) {
+        db.deleteTrackForManga(manga, service).executeAsBlocking()
+    }
+
+    private fun updateRemote(track: Track, service: TrackService) {
+        launchIO {
+            try {
+                service.update(track)
+                db.insertTrack(track).executeAsBlocking()
+                withUIContext { view?.onTrackingRefreshDone() }
+            } catch (e: Throwable) {
+                withUIContext { view?.onTrackingRefreshError(e) }
+
+                // Restart on error to set old values
+                fetchTrackers()
+            }
+        }
+    }
+
+    fun setTrackerStatus(item: TrackItem, index: Int) {
+        val track = item.track!!
+        track.status = item.service.getStatusList()[index]
+        if (track.status == item.service.getCompletionStatus() && track.total_chapters != 0) {
+            track.last_chapter_read = track.total_chapters
+        }
+        updateRemote(track, item.service)
+    }
+
+    fun setTrackerScore(item: TrackItem, index: Int) {
+        val track = item.track!!
+        track.score = item.service.indexToScore(index)
+        updateRemote(track, item.service)
+    }
+
+    fun setTrackerLastChapterRead(item: TrackItem, chapterNumber: Int) {
+        val track = item.track!!
+        if (track.last_chapter_read == 0 && track.last_chapter_read < chapterNumber && track.status != item.service.getRereadingStatus()) {
+            track.status = item.service.getReadingStatus()
+        }
+        track.last_chapter_read = chapterNumber
+        if (track.total_chapters != 0 && track.last_chapter_read == track.total_chapters) {
+            track.status = item.service.getCompletionStatus()
+        }
+        updateRemote(track, item.service)
+    }
+
+    fun setTrackerStartDate(item: TrackItem, date: Long) {
+        val track = item.track!!
+        track.started_reading_date = date
+        updateRemote(track, item.service)
+    }
+
+    fun setTrackerFinishDate(item: TrackItem, date: Long) {
+        val track = item.track!!
+        track.finished_reading_date = date
+        updateRemote(track, item.service)
+    }
+
+    // Track sheet - end
 }

@@ -20,26 +20,42 @@ import eu.kanade.tachiyomi.data.library.LibraryUpdateRanker.rankingScheme
 import eu.kanade.tachiyomi.data.library.LibraryUpdateService.Companion.start
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.track.EnhancedTrackService
 import eu.kanade.tachiyomi.data.track.TrackManager
+import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.toSChapter
 import eu.kanade.tachiyomi.source.model.toSManga
 import eu.kanade.tachiyomi.util.chapter.NoChaptersException
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
-import eu.kanade.tachiyomi.util.lang.runAsObservable
+import eu.kanade.tachiyomi.util.chapter.syncChaptersWithTrackServiceTwoWay
+import eu.kanade.tachiyomi.util.lang.withIOContext
 import eu.kanade.tachiyomi.util.prepUpdateCover
 import eu.kanade.tachiyomi.util.shouldDownloadNewChapters
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.acquireWakeLock
+import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import eu.kanade.tachiyomi.util.system.isServiceRunning
-import rx.Observable
-import rx.Subscription
-import rx.schedulers.Schedulers
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import timber.log.Timber
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -59,17 +75,12 @@ class LibraryUpdateService(
     val coverCache: CoverCache = Injekt.get()
 ) : Service() {
 
-    /**
-     * Wake lock that will be held until the service is destroyed.
-     */
     private lateinit var wakeLock: PowerManager.WakeLock
-
     private lateinit var notifier: LibraryUpdateNotifier
+    private lateinit var ioScope: CoroutineScope
 
-    /**
-     * Subscription where the update is done.
-     */
-    private var subscription: Subscription? = null
+    private var mangaToUpdate: List<LibraryManga> = mutableListOf()
+    private var updateJob: Job? = null
 
     /**
      * Defines what should be updated within a service execution.
@@ -83,6 +94,8 @@ class LibraryUpdateService(
     }
 
     companion object {
+
+        private var instance: LibraryUpdateService? = null
 
         /**
          * Key for category to update.
@@ -114,17 +127,18 @@ class LibraryUpdateService(
          * @return true if service newly started, false otherwise
          */
         fun start(context: Context, category: Category? = null, target: Target = Target.CHAPTERS): Boolean {
-            if (!isRunning(context)) {
+            return if (!isRunning(context)) {
                 val intent = Intent(context, LibraryUpdateService::class.java).apply {
                     putExtra(KEY_TARGET, target)
                     category?.let { putExtra(KEY_CATEGORY, it.id) }
                 }
                 ContextCompat.startForegroundService(context, intent)
 
-                return true
+                true
+            } else {
+                instance?.addMangaToQueue(category?.id ?: -1, target)
+                false
             }
-
-            return false
         }
 
         /**
@@ -144,6 +158,7 @@ class LibraryUpdateService(
     override fun onCreate() {
         super.onCreate()
 
+        ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         notifier = LibraryUpdateNotifier(this)
         wakeLock = acquireWakeLock(javaClass.name)
 
@@ -155,9 +170,13 @@ class LibraryUpdateService(
      * lock.
      */
     override fun onDestroy() {
-        subscription?.unsubscribe()
+        updateJob?.cancel()
+        ioScope?.cancel()
         if (wakeLock.isHeld) {
             wakeLock.release()
+        }
+        if (instance == this) {
+            instance = null
         }
         super.onDestroy()
     }
@@ -182,66 +201,68 @@ class LibraryUpdateService(
         val target = intent.getSerializableExtra(KEY_TARGET) as? Target
             ?: return START_NOT_STICKY
 
-        // Unsubscribe from any previous subscription if needed.
-        subscription?.unsubscribe()
+        instance = this
 
-        // Update favorite manga. Destroy service when completed or in case of an error.
-        subscription = Observable
-            .defer {
-                val selectedScheme = preferences.libraryUpdatePrioritization().get()
-                val mangaList = getMangaToUpdate(intent, target)
-                    .sortedWith(rankingScheme[selectedScheme])
+        // Unsubscribe from any previous subscription if needed
+        updateJob?.cancel()
 
-                // Update either chapter list or manga details.
-                when (target) {
-                    Target.CHAPTERS -> updateChapterList(mangaList)
-                    Target.COVERS -> updateCovers(mangaList)
-                    Target.TRACKING -> updateTrackings(mangaList)
-                }
+        // Update favorite manga
+        val categoryId = intent.getIntExtra(KEY_CATEGORY, -1)
+        addMangaToQueue(categoryId, target)
+
+        // Destroy service when completed or in case of an error.
+        val handler = CoroutineExceptionHandler { _, exception ->
+            Timber.e(exception)
+            stopSelf(startId)
+        }
+        updateJob = ioScope.launch(handler) {
+            when (target) {
+                Target.CHAPTERS -> updateChapterList()
+                Target.COVERS -> updateCovers()
+                Target.TRACKING -> updateTrackings()
             }
-            .subscribeOn(Schedulers.io())
-            .subscribe(
-                {
-                },
-                {
-                    Timber.e(it)
-                    stopSelf(startId)
-                },
-                {
-                    stopSelf(startId)
-                }
-            )
+        }
+        updateJob?.invokeOnCompletion { stopSelf(startId) }
 
         return START_REDELIVER_INTENT
     }
 
     /**
-     * Returns the list of manga to be updated.
+     * Adds list of manga to be updated.
      *
-     * @param intent the update intent.
+     * @param category the ID of the category to update, or -1 if no category specified.
      * @param target the target to update.
-     * @return a list of manga to update
      */
-    fun getMangaToUpdate(intent: Intent, target: Target): List<LibraryManga> {
-        val categoryId = intent.getIntExtra(KEY_CATEGORY, -1)
+    fun addMangaToQueue(categoryId: Int, target: Target) {
+        val libraryManga = db.getLibraryMangas().executeAsBlocking()
 
         var listToUpdate = if (categoryId != -1) {
-            db.getLibraryMangas().executeAsBlocking().filter { it.category == categoryId }
+            libraryManga.filter { it.category == categoryId }
         } else {
             val categoriesToUpdate = preferences.libraryUpdateCategories().get().map(String::toInt)
-            if (categoriesToUpdate.isNotEmpty()) {
-                db.getLibraryMangas().executeAsBlocking()
-                    .filter { it.category in categoriesToUpdate }
-                    .distinctBy { it.id }
+            val listToInclude = if (categoriesToUpdate.isNotEmpty()) {
+                libraryManga.filter { it.category in categoriesToUpdate }
             } else {
-                db.getLibraryMangas().executeAsBlocking().distinctBy { it.id }
+                libraryManga
             }
+
+            val categoriesToExclude = preferences.libraryUpdateCategoriesExclude().get().map(String::toInt)
+            val listToExclude = if (categoriesToExclude.isNotEmpty()) {
+                libraryManga.filter { it.category in categoriesToExclude }
+            } else {
+                emptyList()
+            }
+
+            listToInclude.minus(listToExclude)
         }
         if (target == Target.CHAPTERS && preferences.updateOnlyNonCompleted()) {
-            listToUpdate = listToUpdate.filter { it.status != SManga.COMPLETED }
+            listToUpdate = listToUpdate.filterNot { it.status == SManga.COMPLETED }
         }
 
-        return listToUpdate
+        val selectedScheme = preferences.libraryUpdatePrioritization().get()
+        mangaToUpdate = listToUpdate
+            .distinctBy { it.id }
+            .sortedWith(rankingScheme[selectedScheme])
     }
 
     /**
@@ -253,77 +274,91 @@ class LibraryUpdateService(
      * @param mangaToUpdate the list to update
      * @return an observable delivering the progress of each update.
      */
-    fun updateChapterList(mangaToUpdate: List<LibraryManga>): Observable<LibraryManga> {
-        // Initialize the variables holding the progress of the updates.
-        val count = AtomicInteger(0)
-        // List containing new updates
-        val newUpdates = mutableListOf<Pair<LibraryManga, Array<Chapter>>>()
-        // List containing failed updates
-        val failedUpdates = mutableListOf<Pair<Manga, String?>>()
-        // Boolean to determine if DownloadManager has downloads
-        var hasDownloads = false
+    suspend fun updateChapterList() {
+        val semaphore = Semaphore(5)
+        val progressCount = AtomicInteger(0)
+        val currentlyUpdatingManga = CopyOnWriteArrayList<LibraryManga>()
+        val newUpdates = CopyOnWriteArrayList<Pair<LibraryManga, Array<Chapter>>>()
+        val failedUpdates = CopyOnWriteArrayList<Pair<Manga, String?>>()
+        val hasDownloads = AtomicBoolean(false)
+        val loggedServices by lazy { trackManager.services.filter { it.isLogged } }
 
-        // Emit each manga and update it sequentially.
-        return Observable.from(mangaToUpdate)
-            // Notify manga that will update.
-            .doOnNext { notifier.showProgressNotification(it, count.andIncrement, mangaToUpdate.size) }
-            // Update the chapters of the manga
-            .concatMap { manga ->
-                updateManga(manga)
-                    // If there's any error, return empty update and continue.
-                    .onErrorReturn {
-                        val errorMessage = if (it is NoChaptersException) {
-                            getString(R.string.no_chapters_error)
-                        } else {
-                            it.message
-                        }
-                        failedUpdates.add(Pair(manga, errorMessage))
-                        Pair(emptyList(), emptyList())
-                    }
-                    // Filter out mangas without new chapters (or failed).
-                    .filter { (first) -> first.isNotEmpty() }
-                    .doOnNext {
-                        if (manga.shouldDownloadNewChapters(db, preferences)) {
-                            downloadChapters(manga, it.first)
-                            hasDownloads = true
-                        }
-                    }
-                    // Convert to the manga that contains new chapters.
-                    .map {
-                        Pair(
-                            manga,
-                            (
-                                it.first.sortedByDescending { ch -> ch.source_order }
-                                    .toTypedArray()
+        withIOContext {
+            mangaToUpdate.groupBy { it.source }
+                .values
+                .map { mangaInSource ->
+                    async {
+                        semaphore.withPermit {
+                            mangaInSource.forEach { manga ->
+                                if (updateJob?.isActive != true) {
+                                    return@async
+                                }
+
+                                currentlyUpdatingManga.add(manga)
+                                notifier.showProgressNotification(
+                                    currentlyUpdatingManga,
+                                    progressCount.get(),
+                                    mangaToUpdate.size
                                 )
-                        )
-                    }
-            }
-            // Add manga with new chapters to the list.
-            .doOnNext { manga ->
-                // Add to the list
-                newUpdates.add(manga)
-            }
-            // Notify result of the overall update.
-            .doOnCompleted {
-                notifier.cancelProgressNotification()
 
-                if (newUpdates.isNotEmpty()) {
-                    notifier.showUpdateNotifications(newUpdates)
-                    if (hasDownloads) {
-                        DownloadService.start(this)
+                                try {
+                                    val (newChapters, _) = updateManga(manga)
+
+                                    if (newChapters.isNotEmpty()) {
+                                        if (manga.shouldDownloadNewChapters(db, preferences)) {
+                                            downloadChapters(manga, newChapters)
+                                            hasDownloads.set(true)
+                                        }
+
+                                        // Convert to the manga that contains new chapters
+                                        newUpdates.add(manga to newChapters.sortedByDescending { ch -> ch.source_order }.toTypedArray())
+                                    }
+                                } catch (e: Throwable) {
+                                    val errorMessage = if (e is NoChaptersException) {
+                                        getString(R.string.no_chapters_error)
+                                    } else if (e is SourceManager.SourceNotInstalledException) {
+                                        // failedUpdates will already have the source, don't need to copy it into the message
+                                        getString(R.string.loader_not_implemented_error)
+                                    } else {
+                                        e.message
+                                    }
+                                    failedUpdates.add(manga to errorMessage)
+                                }
+
+                                if (preferences.autoUpdateTrackers()) {
+                                    updateTrackings(manga, loggedServices)
+                                }
+
+                                currentlyUpdatingManga.remove(manga)
+                                progressCount.andIncrement
+                                notifier.showProgressNotification(
+                                    currentlyUpdatingManga,
+                                    progressCount.get(),
+                                    mangaToUpdate.size
+                                )
+                            }
+                        }
                     }
                 }
+                .awaitAll()
+        }
 
-                if (preferences.showLibraryUpdateErrors() && failedUpdates.isNotEmpty()) {
-                    val errorFile = writeErrorFile(failedUpdates)
-                    notifier.showUpdateErrorNotification(
-                        failedUpdates.map { it.first.title },
-                        errorFile.getUriCompat(this)
-                    )
-                }
+        notifier.cancelProgressNotification()
+
+        if (newUpdates.isNotEmpty()) {
+            notifier.showUpdateNotifications(newUpdates)
+            if (hasDownloads.get()) {
+                DownloadService.start(this)
             }
-            .map { (first) -> first }
+        }
+
+        if (preferences.showLibraryUpdateErrors() && failedUpdates.isNotEmpty()) {
+            val errorFile = writeErrorFile(failedUpdates)
+            notifier.showUpdateErrorNotification(
+                failedUpdates.map { it.first.title },
+                errorFile.getUriCompat(this)
+            )
+        }
     }
 
     private fun downloadChapters(manga: Manga, chapters: List<Chapter>) {
@@ -338,12 +373,15 @@ class LibraryUpdateService(
      * @param manga the manga to update.
      * @return a pair of the inserted and removed chapters.
      */
-    fun updateManga(manga: Manga): Observable<Pair<List<Chapter>, List<Chapter>>> {
+    suspend fun updateManga(manga: Manga): Pair<List<Chapter>, List<Chapter>> {
         val source = sourceManager.getOrStub(manga.source)
 
         // Update manga details metadata in the background
         if (preferences.autoUpdateMetadata()) {
-            runAsObservable({
+            val handler = CoroutineExceptionHandler { _, exception ->
+                Timber.e(exception)
+            }
+            GlobalScope.launch(Dispatchers.IO + handler) {
                 val updatedManga = source.getMangaDetails(manga.toMangaInfo())
                 val sManga = updatedManga.toSManga()
                 // Avoid "losing" existing cover
@@ -355,82 +393,117 @@ class LibraryUpdateService(
 
                 manga.copyFrom(sManga)
                 db.insertManga(manga).executeAsBlocking()
-                manga
-            })
-                .onErrorResumeNext { Observable.just(manga) }
-                .subscribeOn(Schedulers.io())
-                .subscribe()
+            }
         }
 
-        return runAsObservable({
-            source.getChapterList(manga.toMangaInfo())
-                .map { it.toSChapter() }
-        })
-            .map { syncChaptersWithSource(db, it, manga, source) }
+        val chapters = source.getChapterList(manga.toMangaInfo())
+            .map { it.toSChapter() }
+
+        return syncChaptersWithSource(db, chapters, manga, source)
     }
 
-    private fun updateCovers(mangaToUpdate: List<LibraryManga>): Observable<LibraryManga> {
-        var count = 0
+    private suspend fun updateCovers() {
+        val semaphore = Semaphore(5)
+        val progressCount = AtomicInteger(0)
+        val currentlyUpdatingManga = CopyOnWriteArrayList<LibraryManga>()
 
-        return Observable.from(mangaToUpdate)
-            .doOnNext {
-                notifier.showProgressNotification(it, count++, mangaToUpdate.size)
-            }
-            .flatMap { manga ->
-                val source = sourceManager.get(manga.source)
-                    ?: return@flatMap Observable.empty<LibraryManga>()
+        withIOContext {
+            mangaToUpdate.groupBy { it.source }
+                .values
+                .map { mangaInSource ->
+                    async {
+                        semaphore.withPermit {
+                            mangaInSource.forEach { manga ->
+                                if (updateJob?.isActive != true) {
+                                    return@async
+                                }
 
-                runAsObservable({
-                    val networkManga = source.getMangaDetails(manga.toMangaInfo())
-                    val sManga = networkManga.toSManga()
-                    manga.prepUpdateCover(coverCache, sManga, true)
-                    sManga.thumbnail_url?.let {
-                        manga.thumbnail_url = it
-                        db.insertManga(manga).executeAsBlocking()
+                                currentlyUpdatingManga.add(manga)
+                                notifier.showProgressNotification(
+                                    currentlyUpdatingManga,
+                                    progressCount.get(),
+                                    mangaToUpdate.size
+                                )
+
+                                sourceManager.get(manga.source)?.let { source ->
+                                    try {
+                                        val networkManga =
+                                            source.getMangaDetails(manga.toMangaInfo())
+                                        val sManga = networkManga.toSManga()
+                                        manga.prepUpdateCover(coverCache, sManga, true)
+                                        sManga.thumbnail_url?.let {
+                                            manga.thumbnail_url = it
+                                            db.insertManga(manga).executeAsBlocking()
+                                        }
+                                    } catch (e: Throwable) {
+                                        // Ignore errors and continue
+                                        Timber.e(e)
+                                    }
+                                }
+
+                                currentlyUpdatingManga.remove(manga)
+                                progressCount.andIncrement
+                                notifier.showProgressNotification(
+                                    currentlyUpdatingManga,
+                                    progressCount.get(),
+                                    mangaToUpdate.size
+                                )
+                            }
+                        }
                     }
-                    manga
-                })
-                    .onErrorReturn { manga }
-            }
-            .doOnCompleted {
-                notifier.cancelProgressNotification()
-            }
+                }
+                .awaitAll()
+        }
+
+        coverCache.clearMemoryCache()
+        notifier.cancelProgressNotification()
     }
 
     /**
      * Method that updates the metadata of the connected tracking services. It's called in a
      * background thread, so it's safe to do heavy operations or network calls here.
      */
-    private fun updateTrackings(mangaToUpdate: List<LibraryManga>): Observable<LibraryManga> {
-        // Initialize the variables holding the progress of the updates.
-        var count = 0
-
+    private suspend fun updateTrackings() {
+        var progressCount = 0
         val loggedServices = trackManager.services.filter { it.isLogged }
 
-        // Emit each manga and update it sequentially.
-        return Observable.from(mangaToUpdate)
-            // Notify manga that will update.
-            .doOnNext { notifier.showProgressNotification(it, count++, mangaToUpdate.size) }
-            // Update the tracking details.
-            .concatMap { manga ->
-                val tracks = db.getTracks(manga).executeAsBlocking()
+        mangaToUpdate.forEach { manga ->
+            if (updateJob?.isActive != true) {
+                return
+            }
 
-                Observable.from(tracks)
-                    .concatMap { track ->
+            notifier.showProgressNotification(listOf(manga), progressCount++, mangaToUpdate.size)
+
+            // Update the tracking details.
+            updateTrackings(manga, loggedServices)
+        }
+
+        notifier.cancelProgressNotification()
+    }
+
+    private suspend fun updateTrackings(manga: LibraryManga, loggedServices: List<TrackService>) {
+        db.getTracks(manga).executeAsBlocking()
+            .map { track ->
+                supervisorScope {
+                    async {
                         val service = trackManager.getService(track.sync_id)
                         if (service != null && service in loggedServices) {
-                            runAsObservable({ service.refresh(track) })
-                                .doOnNext { db.insertTrack(it).executeAsBlocking() }
-                                .onErrorReturn { track }
-                        } else {
-                            Observable.empty()
+                            try {
+                                val updatedTrack = service.refresh(track)
+                                db.insertTrack(updatedTrack).executeAsBlocking()
+
+                                if (service is EnhancedTrackService) {
+                                    syncChaptersWithTrackServiceTwoWay(db, db.getChapters(manga).executeAsBlocking(), track, service)
+                                }
+                            } catch (e: Throwable) {
+                                // Ignore errors and continue
+                                Timber.e(e)
+                            }
                         }
                     }
-                    .map { manga }
+                }
             }
-            .doOnCompleted {
-                notifier.cancelProgressNotification()
-            }
+            .awaitAll()
     }
 
     /**
@@ -439,15 +512,24 @@ class LibraryUpdateService(
     private fun writeErrorFile(errors: List<Pair<Manga, String?>>): File {
         try {
             if (errors.isNotEmpty()) {
-                val destFile = File(externalCacheDir, "tachiyomi_update_errors.txt")
-
-                destFile.bufferedWriter().use { out ->
-                    errors.forEach { (manga, error) ->
-                        val source = sourceManager.getOrStub(manga.source)
-                        out.write("${manga.title} ($source): $error\n")
+                val file = createFileInCacheDir("tachiyomi_update_errors.txt")
+                file.bufferedWriter().use { out ->
+                    // Error file format:
+                    // ! Error
+                    //   # Source
+                    //     - Manga
+                    errors.groupBy({ it.second }, { it.first }).forEach { (error, mangas) ->
+                        out.write("! ${error}\n")
+                        mangas.groupBy { it.source }.forEach { (srcId, mangas) ->
+                            val source = sourceManager.getOrStub(srcId)
+                            out.write("  # $source\n")
+                            mangas.forEach {
+                                out.write("    - ${it.title}\n")
+                            }
+                        }
                     }
                 }
-                return destFile
+                return file
             }
         } catch (e: Exception) {
             // Empty

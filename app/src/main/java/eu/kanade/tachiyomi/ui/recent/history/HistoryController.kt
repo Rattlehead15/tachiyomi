@@ -1,46 +1,54 @@
 package eu.kanade.tachiyomi.ui.recent.history
 
+import android.app.Dialog
+import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuInflater
+import android.view.MenuItem
 import android.view.View
-import android.view.ViewGroup
 import androidx.appcompat.widget.SearchView
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dev.chrisbanes.insetter.applyInsetter
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.backup.BackupRestoreService
+import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.History
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.databinding.HistoryControllerBinding
-import eu.kanade.tachiyomi.ui.base.controller.NoToolbarElevationController
+import eu.kanade.tachiyomi.ui.base.controller.DialogController
 import eu.kanade.tachiyomi.ui.base.controller.NucleusController
 import eu.kanade.tachiyomi.ui.base.controller.RootController
 import eu.kanade.tachiyomi.ui.base.controller.withFadeTransaction
 import eu.kanade.tachiyomi.ui.browse.source.browse.ProgressItem
+import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaController
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.view.onAnimationsFinished
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import reactivecircus.flowbinding.appcompat.queryTextChanges
+import timber.log.Timber
+import uy.kohesive.injekt.injectLazy
 
 /**
  * Fragment that shows recently read manga.
- * Uses [R.layout.history_controller].
- * UI related actions should be called from here.
  */
 class HistoryController :
     NucleusController<HistoryControllerBinding, HistoryPresenter>(),
     RootController,
-    NoToolbarElevationController,
     FlexibleAdapter.OnUpdateListener,
     FlexibleAdapter.EndlessScrollListener,
     HistoryAdapter.OnRemoveClickListener,
     HistoryAdapter.OnResumeClickListener,
     HistoryAdapter.OnItemClickListener,
     RemoveHistoryDialog.Listener {
+
+    private val db: DatabaseHelper by injectLazy()
 
     /**
      * Adapter containing the recent manga.
@@ -66,13 +74,16 @@ class HistoryController :
         return HistoryPresenter()
     }
 
-    override fun inflateView(inflater: LayoutInflater, container: ViewGroup): View {
-        binding = HistoryControllerBinding.inflate(inflater)
-        return binding.root
-    }
+    override fun createBinding(inflater: LayoutInflater) = HistoryControllerBinding.inflate(inflater)
 
     override fun onViewCreated(view: View) {
         super.onViewCreated(view)
+
+        binding.recycler.applyInsetter {
+            type(navigationBars = true) {
+                padding()
+            }
+        }
 
         // Initialize adapter
         binding.recycler.layoutManager = LinearLayoutManager(view.context)
@@ -101,6 +112,9 @@ class HistoryController :
         } else {
             adapter?.onLoadMoreComplete(mangaHistory)
         }
+        binding.recycler.onAnimationsFinished {
+            (activity as? MainActivity)?.ready = true
+        }
     }
 
     /**
@@ -109,6 +123,7 @@ class HistoryController :
     fun onAddPageError(error: Throwable) {
         adapter?.onLoadMoreComplete(null)
         adapter?.endlessTargetCount = 1
+        Timber.e(error)
     }
 
     override fun onUpdateEmptyView(size: Int) {
@@ -184,7 +199,7 @@ class HistoryController :
             searchView.clearFocus()
         }
         searchView.queryTextChanges()
-            .filter { router.backstack.lastOrNull()?.controller() == this }
+            .filter { router.backstack.lastOrNull()?.controller == this }
             .onEach {
                 query = it.toString()
                 presenter.updateList(query)
@@ -195,5 +210,34 @@ class HistoryController :
         searchItem.fixExpand(
             onExpand = { invalidateMenuOnExpand() }
         )
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when (item.itemId) {
+            R.id.action_clear_history -> {
+                val ctrl = ClearHistoryDialogController()
+                ctrl.targetController = this@HistoryController
+                ctrl.showDialog(router)
+            }
+        }
+
+        return super.onOptionsItemSelected(item)
+    }
+
+    class ClearHistoryDialogController : DialogController() {
+        override fun onCreateDialog(savedViewState: Bundle?): Dialog {
+            return MaterialAlertDialogBuilder(activity!!)
+                .setMessage(R.string.clear_history_confirmation)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    (targetController as? HistoryController)?.clearHistory()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .create()
+        }
+    }
+
+    private fun clearHistory() {
+        db.deleteHistory().executeAsBlocking()
+        activity?.toast(R.string.clear_history_completed)
     }
 }

@@ -5,19 +5,17 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import androidx.annotation.StringRes
-import com.afollestad.materialdialogs.MaterialDialog
-import com.afollestad.materialdialogs.customview.customView
 import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.ControllerChangeType
 import com.dd.processbutton.iml.ActionProcessButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.databinding.PrefAccountLoginBinding
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
 import uy.kohesive.injekt.injectLazy
 
 abstract class LoginDialogPreference(
-    @StringRes private val titleRes: Int? = null,
-    private val titleFormatArgs: Any? = null,
     @StringRes private val usernameLabelRes: Int? = null,
     bundle: Bundle? = null
 ) : DialogController(bundle) {
@@ -29,17 +27,13 @@ abstract class LoginDialogPreference(
 
     override fun onCreateDialog(savedViewState: Bundle?): Dialog {
         binding = PrefAccountLoginBinding.inflate(LayoutInflater.from(activity!!))
-        var dialog = MaterialDialog(activity!!)
-            .customView(view = binding!!.root)
-            .negativeButton(android.R.string.cancel)
-
-        if (titleRes != null) {
-            dialog = dialog.title(text = activity!!.getString(titleRes, titleFormatArgs))
-        }
-
-        onViewCreated(dialog.view)
-
-        return dialog
+        onViewCreated(binding!!.root)
+        val titleName = activity!!.getString(getTitleName())
+        return MaterialAlertDialogBuilder(activity!!)
+            .setTitle(activity!!.getString(R.string.login_title, titleName))
+            .setView(binding!!.root)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
     }
 
     fun onViewCreated(view: View) {
@@ -63,6 +57,9 @@ abstract class LoginDialogPreference(
     open fun onDialogClosed() {
         binding = null
     }
+
+    @StringRes
+    protected abstract fun getTitleName(): Int
 
     protected abstract fun checkLogin()
 

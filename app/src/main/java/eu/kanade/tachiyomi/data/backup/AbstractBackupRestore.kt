@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.util.chapter.NoChaptersException
+import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlinx.coroutines.Job
 import uy.kohesive.injekt.injectLazy
 import java.io.File
@@ -36,9 +37,9 @@ abstract class AbstractBackupRestore<T : AbstractBackupManager>(protected val co
 
     protected val errors = mutableListOf<Pair<Date, String>>()
 
-    abstract fun performRestore(uri: Uri): Boolean
+    abstract suspend fun performRestore(uri: Uri): Boolean
 
-    fun restoreBackup(uri: Uri): Boolean {
+    suspend fun restoreBackup(uri: Uri): Boolean {
         val startTime = System.currentTimeMillis()
         restoreProgress = 0
         errors.clear()
@@ -95,7 +96,8 @@ abstract class AbstractBackupRestore<T : AbstractBackupManager>(protected val co
                     errors.add(Date() to "${manga.title} - ${e.message}")
                 }
             } else {
-                errors.add(Date() to "${manga.title} - ${context.getString(R.string.tracker_not_logged_in, service?.name)}")
+                val serviceName = service?.nameRes()?.let { context.getString(it) }
+                errors.add(Date() to "${manga.title} - ${context.getString(R.string.tracker_not_logged_in, serviceName)}")
             }
         }
     }
@@ -118,15 +120,15 @@ abstract class AbstractBackupRestore<T : AbstractBackupManager>(protected val co
     internal fun writeErrorLog(): File {
         try {
             if (errors.isNotEmpty()) {
-                val destFile = File(context.externalCacheDir, "tachiyomi_restore.txt")
+                val file = context.createFileInCacheDir("tachiyomi_restore.txt")
                 val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
 
-                destFile.bufferedWriter().use { out ->
+                file.bufferedWriter().use { out ->
                     errors.forEach { (date, message) ->
                         out.write("[${sdf.format(date)}] $message\n")
                     }
                 }
-                return destFile
+                return file
             }
         } catch (e: Exception) {
             // Empty

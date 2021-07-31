@@ -3,9 +3,8 @@ package eu.kanade.tachiyomi.ui.manga.track
 import android.app.Dialog
 import android.os.Bundle
 import androidx.core.os.bundleOf
-import com.afollestad.materialdialogs.MaterialDialog
-import com.afollestad.materialdialogs.list.listItemsSingleChoice
 import com.bluelinelabs.conductor.Controller
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackManager
@@ -14,14 +13,17 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 class SetTrackStatusDialog<T> : DialogController
-        where T : Controller, T : SetTrackStatusDialog.Listener {
+        where T : Controller {
 
     private val item: TrackItem
 
-    constructor(target: T, item: TrackItem) : super(
+    private lateinit var listener: Listener
+
+    constructor(target: T, listener: Listener, item: TrackItem) : super(
         bundleOf(KEY_ITEM_TRACK to item.track)
     ) {
         targetController = target
+        this.listener = listener
         this.item = item
     }
 
@@ -33,22 +35,20 @@ class SetTrackStatusDialog<T> : DialogController
     }
 
     override fun onCreateDialog(savedViewState: Bundle?): Dialog {
-        val item = item
         val statusList = item.service.getStatusList()
         val statusString = statusList.map { item.service.getStatus(it) }
-        val selectedIndex = statusList.indexOf(item.track?.status)
+        var selectedIndex = statusList.indexOf(item.track?.status)
 
-        return MaterialDialog(activity!!)
-            .title(R.string.status)
-            .negativeButton(android.R.string.cancel)
-            .listItemsSingleChoice(
-                items = statusString,
-                initialSelection = selectedIndex,
-                waitForPositiveButton = false
-            ) { dialog, position, _ ->
-                (targetController as? Listener)?.setStatus(item, position)
-                dialog.dismiss()
+        return MaterialAlertDialogBuilder(activity!!)
+            .setTitle(R.string.status)
+            .setSingleChoiceItems(statusString.toTypedArray(), selectedIndex) { _, which ->
+                selectedIndex = which
             }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                listener.setStatus(item, selectedIndex)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
     }
 
     interface Listener {

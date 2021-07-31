@@ -16,6 +16,7 @@ import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.util.system.getResourceColor
+import eu.kanade.tachiyomi.widget.preference.AdaptiveTitlePreferenceCategory
 import eu.kanade.tachiyomi.widget.preference.IntListPreference
 import eu.kanade.tachiyomi.widget.preference.SwitchPreferenceCategory
 import eu.kanade.tachiyomi.widget.preference.SwitchSettingsPreference
@@ -33,9 +34,8 @@ inline fun PreferenceGroup.preference(block: (@DSL Preference).() -> Unit): Pref
 }
 
 inline fun PreferenceGroup.infoPreference(@StringRes infoRes: Int): Preference {
-    return initThenAdd(
-        Preference(context),
-        {
+    return add(
+        Preference(context).apply {
             iconRes = R.drawable.ic_info_24dp
             iconTint = context.getResourceColor(android.R.attr.textColorHint)
             summaryRes = infoRes
@@ -77,7 +77,7 @@ inline fun PreferenceGroup.multiSelectListPreference(block: (@DSL MultiSelectLis
 }
 
 inline fun PreferenceScreen.preferenceCategory(block: (@DSL PreferenceCategory).() -> Unit): PreferenceCategory {
-    return addThenInit(PreferenceCategory(context), block)
+    return addThenInit(AdaptiveTitlePreferenceCategory(context), block)
 }
 
 inline fun PreferenceScreen.preferenceScreen(block: (@DSL PreferenceScreen).() -> Unit): PreferenceScreen {

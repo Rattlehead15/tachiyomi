@@ -5,12 +5,10 @@ import android.net.Uri
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.backup.AbstractBackupRestoreValidator
 import eu.kanade.tachiyomi.data.backup.full.models.BackupSerializer
-import kotlinx.serialization.ExperimentalSerializationApi
 import okio.buffer
 import okio.gzip
 import okio.source
 
-@OptIn(ExperimentalSerializationApi::class)
 class FullBackupRestoreValidator : AbstractBackupRestoreValidator() {
     /**
      * Checks for critical backup file data.
@@ -41,7 +39,7 @@ class FullBackupRestoreValidator : AbstractBackupRestoreValidator() {
         val missingTrackers = trackers
             .mapNotNull { trackManager.getService(it) }
             .filter { !it.isLogged }
-            .map { it.name }
+            .map { context.getString(it.nameRes()) }
             .sorted()
 
         return Results(missingSources, missingTrackers)

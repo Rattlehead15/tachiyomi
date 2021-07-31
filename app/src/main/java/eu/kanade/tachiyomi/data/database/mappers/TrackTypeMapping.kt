@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.data.database.mappers
 
-import android.content.ContentValues
 import android.database.Cursor
+import androidx.core.content.contentValuesOf
 import com.pushtorefresh.storio.sqlite.SQLiteTypeMapping
 import com.pushtorefresh.storio.sqlite.operations.delete.DefaultDeleteResolver
 import com.pushtorefresh.storio.sqlite.operations.get.DefaultGetResolver
@@ -44,23 +44,22 @@ class TrackPutResolver : DefaultPutResolver<Track>() {
         .whereArgs(obj.id)
         .build()
 
-    override fun mapToContentValues(obj: Track) = ContentValues(10).apply {
-        put(COL_ID, obj.id)
-        put(COL_MANGA_ID, obj.manga_id)
-        put(COL_SYNC_ID, obj.sync_id)
-        put(COL_MEDIA_ID, obj.media_id)
-        put(COL_LIBRARY_ID, obj.library_id)
-        put(COL_TITLE, obj.title)
-        put(COL_LAST_CHAPTER_READ, obj.last_chapter_read)
-        put(COL_TOTAL_CHAPTERS, obj.total_chapters)
-        put(COL_STATUS, obj.status)
-        put(COL_TRACKING_URL, obj.tracking_url)
-        put(COL_SCORE, obj.score)
-
-        // These aren't used anymore
-        put(COL_START_DATE, 0)
-        put(COL_FINISH_DATE, 0)
-    }
+    override fun mapToContentValues(obj: Track) =
+        contentValuesOf(
+            COL_ID to obj.id,
+            COL_MANGA_ID to obj.manga_id,
+            COL_SYNC_ID to obj.sync_id,
+            COL_MEDIA_ID to obj.media_id,
+            COL_LIBRARY_ID to obj.library_id,
+            COL_TITLE to obj.title,
+            COL_LAST_CHAPTER_READ to obj.last_chapter_read,
+            COL_TOTAL_CHAPTERS to obj.total_chapters,
+            COL_STATUS to obj.status,
+            COL_TRACKING_URL to obj.tracking_url,
+            COL_SCORE to obj.score,
+            COL_START_DATE to obj.started_reading_date,
+            COL_FINISH_DATE to obj.finished_reading_date
+        )
 }
 
 class TrackGetResolver : DefaultGetResolver<Track>() {
@@ -77,6 +76,8 @@ class TrackGetResolver : DefaultGetResolver<Track>() {
         status = cursor.getInt(cursor.getColumnIndex(COL_STATUS))
         score = cursor.getFloat(cursor.getColumnIndex(COL_SCORE))
         tracking_url = cursor.getString(cursor.getColumnIndex(COL_TRACKING_URL))
+        started_reading_date = cursor.getLong(cursor.getColumnIndex(COL_START_DATE))
+        finished_reading_date = cursor.getLong(cursor.getColumnIndex(COL_FINISH_DATE))
     }
 }
 

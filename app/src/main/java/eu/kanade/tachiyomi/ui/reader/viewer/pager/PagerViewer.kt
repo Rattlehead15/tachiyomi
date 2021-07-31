@@ -12,6 +12,7 @@ import androidx.viewpager.widget.ViewPager
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.viewer.BaseViewer
@@ -80,6 +81,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
         pager.addOnPageChangeListener(
             object : ViewPager.SimpleOnPageChangeListener() {
                 override fun onPageSelected(position: Int) {
+                    if (activity.isScrollingThroughPages.not()) {
+                        activity.hideMenu()
+                    }
                     onPageChange(position)
                 }
 
@@ -96,6 +100,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
 
             val pos = PointF(event.rawX / pager.width, event.rawY / pager.height)
             val navigator = config.navigator
+
             when (navigator.getAction(pos)) {
                 NavigationRegion.MENU -> activity.toggleMenu()
                 NavigationRegion.NEXT -> moveToNext()
@@ -115,8 +120,19 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
             false
         }
 
+        config.dualPageSplitChangedListener = { enabled ->
+            if (!enabled) {
+                cleanupPageSplit()
+            }
+        }
+
         config.imagePropertyChangedListener = {
             refreshAdapter()
+        }
+
+        config.navigationModeChangedListener = {
+            val showOnStart = config.navigationOverlayOnStart || config.forceNavigationOverlay
+            activity.binding.navigationOverlay.setNavigation(config.navigator, config.tappingEnabled, showOnStart)
         }
     }
 
@@ -179,6 +195,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
         val pages = page.chapter.pages ?: return
         Timber.d("onReaderPageSelected: ${page.number}/${pages.size}")
         activity.onPageSelected(page)
+
+        // Skip preload on inserts it causes unwanted page jumping
+        if (page is InsertPage) {
+            return
+        }
 
         // Preload next chapter once we're within the last 5 pages of the current chapter
         val inPreloadRange = pages.size - page.number < 5
@@ -370,5 +391,16 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
             }
         }
         return false
+    }
+
+    fun onPageSplit(currentPage: ReaderPage, newPage: InsertPage) {
+        activity.runOnUiThread {
+            // Need to insert on UI thread else images will go blank
+            adapter.onPageSplit(currentPage, newPage)
+        }
+    }
+
+    private fun cleanupPageSplit() {
+        adapter.cleanupPageSplit()
     }
 }

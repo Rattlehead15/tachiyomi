@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-@Config(constants = BuildConfig::class, sdk = [Build.VERSION_CODES.LOLLIPOP])
+@Config(constants = BuildConfig::class, sdk = [Build.VERSION_CODES.M])
 @RunWith(CustomRobolectricGradleTestRunner::class)
 class CategoryTest {
 
@@ -75,7 +75,7 @@ class CategoryTest {
         assertThat(c.id).isNotZero
 
         // Add a manga to a category
-        val m = db.getMangas().executeAsBlocking()[0]
+        val m = db.getLibraryMangas().executeAsBlocking()[0]
         val mc = MangaCategory.create(m, c)
         db.insertMangaCategory(mc).executeAsBlocking()
 

@@ -27,17 +27,17 @@ If you would like to see these features added consider [supporting me](https://k
  * The [Kaku](https://github.com/0xbad1d3a5/Kaku) devs for the deinflection code and various design ideas. Definitely recommend Kaku for OCR outside of Tachiyomi
 
 # ![app icon](./.github/readme-images/app-icon.png)Tachiyomi
-Tachiyomi is a free and open source manga reader for Android 5.0 and above.
+Tachiyomi is a free and open source manga reader for Android 6.0 and above.
 
 ![screenshots of app](./.github/readme-images/screens.png)
 
 ## Features
 
 Features include:
-* Online reading from sources such as MangaDex, MangaSee, Mangakakalot, [and more](https://github.com/tachiyomiorg/tachiyomi-extensions)
-* Local reading of downloaded manga
+* Online reading from a variety of sources
+* Local reading of downloaded content
 * A configurable reader with multiple viewers, reading directions and other settings.
-* [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.io/), [Shikimori](https://shikimori.one), and [Bangumi](https://bgm.tv/) support
+* Tracker support: [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.io/), [Shikimori](https://shikimori.one), and [Bangumi](https://bgm.tv/)
 * Categories to organize your library
 * Light and dark themes
 * Schedule updating your library for new chapters
@@ -46,7 +46,7 @@ Features include:
 ## Download
 Get the app from our [releases page](https://github.com/tachiyomiorg/tachiyomi/releases).
 
-If you want to try new features before they get to the stable release, you can download the preview version [here](https://github.com/tachiyomiorg/android-app-preview/releases).
+If you want to try new features before they get to the stable release, you can download the preview version [here](https://github.com/tachiyomiorg/tachiyomi-preview/releases).
 
 ## Issues, Feature Requests and Contributing
 
@@ -67,7 +67,6 @@ Please make sure to read the full guidelines. Your issue may be closed without w
 * Include steps to reproduce (if not obvious from description)
 * Include screenshot (if needed)
 * If it could be device-dependent, try reproducing on another device (if possible)
-* For large logs use http://pastebin.com/ (or similar)
 * Don't group unrelated requests into one issue
 
 DO: https://github.com/tachiyomiorg/tachiyomi/issues/24 https://github.com/tachiyomiorg/tachiyomi/issues/71
@@ -82,6 +81,16 @@ DON'T: https://github.com/tachiyomiorg/tachiyomi/issues/75
 * Include screenshot (if needed)
 
 Source requests should be created at https://github.com/tachiyomiorg/tachiyomi-extensions, they do not belong in this repository.
+</details>
+
+<details><summary>Contributing</summary>
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
+</details>
+
+<details><summary>Code of Conduct</summary>
+
+See [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 </details>
 
 ## FAQ

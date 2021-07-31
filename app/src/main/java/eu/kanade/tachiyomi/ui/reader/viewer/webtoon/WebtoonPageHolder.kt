@@ -1,8 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
-import android.annotation.SuppressLint
 import android.content.res.Resources
-import android.graphics.drawable.Drawable
+import android.graphics.drawable.Animatable
 import android.view.Gravity
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -14,21 +13,18 @@ import android.widget.TextView
 import androidx.appcompat.widget.AppCompatButton
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.view.isVisible
-import com.bumptech.glide.load.DataSource
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.engine.GlideException
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
-import com.bumptech.glide.load.resource.gif.GifDrawable
-import com.bumptech.glide.request.RequestListener
-import com.bumptech.glide.request.target.Target
-import com.bumptech.glide.request.transition.NoTransition
+import androidx.core.view.updateLayoutParams
+import androidx.core.view.updateMargins
+import coil.clear
+import coil.imageLoader
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.glide.GlideApp
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressBar
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.ImageUtil
 import eu.kanade.tachiyomi.util.system.dpToPx
@@ -37,6 +33,7 @@ import rx.Subscription
 import rx.android.schedulers.AndroidSchedulers
 import rx.schedulers.Schedulers
 import java.io.InputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 
 /**
@@ -54,7 +51,7 @@ class WebtoonPageHolder(
     /**
      * Loading progress bar to indicate the current progress.
      */
-    private val progressBar = createProgressBar()
+    private val progressIndicator = createProgressIndicator()
 
     /**
      * Progress bar container. Needed to keep a minimum height size of the holder, otherwise the
@@ -66,6 +63,7 @@ class WebtoonPageHolder(
      * Image view that supports subsampling on zoom.
      */
     private var subsamplingImageView: SubsamplingScaleImageView? = null
+    private var cropBorders: Boolean = false
 
     /**
      * Simple image view only used on GIFs.
@@ -145,9 +143,9 @@ class WebtoonPageHolder(
         removeDecodeErrorLayout()
         subsamplingImageView?.recycle()
         subsamplingImageView?.isVisible = false
-        imageView?.let { GlideApp.with(frame).clear(it) }
+        imageView?.clear()
         imageView?.isVisible = false
-        progressBar.setProgress(0)
+        progressIndicator.setProgress(0, animated = false)
     }
 
     /**
@@ -180,7 +178,7 @@ class WebtoonPageHolder(
             .distinctUntilChanged()
             .onBackpressureLatest()
             .observeOn(AndroidSchedulers.mainThread())
-            .subscribe { value -> progressBar.setProgress(value) }
+            .subscribe { value -> progressIndicator.setProgress(value) }
 
         addSubscription(progressSubscription)
     }
@@ -238,7 +236,7 @@ class WebtoonPageHolder(
      */
     private fun setQueued() {
         progressContainer.isVisible = true
-        progressBar.isVisible = true
+        progressIndicator.show()
         retryContainer?.isVisible = false
         removeDecodeErrorLayout()
     }
@@ -248,7 +246,7 @@ class WebtoonPageHolder(
      */
     private fun setLoading() {
         progressContainer.isVisible = true
-        progressBar.isVisible = true
+        progressIndicator.show()
         retryContainer?.isVisible = false
         removeDecodeErrorLayout()
     }
@@ -258,7 +256,7 @@ class WebtoonPageHolder(
      */
     private fun setDownloading() {
         progressContainer.isVisible = true
-        progressBar.isVisible = true
+        progressIndicator.show()
         retryContainer?.isVisible = false
         removeDecodeErrorLayout()
     }
@@ -267,9 +265,8 @@ class WebtoonPageHolder(
      * Called when the page is ready.
      */
     private fun setImage() {
-        progressContainer.isVisible = true
-        progressBar.isVisible = true
-        progressBar.completeAndFadeOut()
+        progressIndicator.setCompleteProgressAndHide()
+        progressContainer.isVisible = false
         retryContainer?.isVisible = false
         removeDecodeErrorLayout()
 
@@ -280,9 +277,9 @@ class WebtoonPageHolder(
         readImageHeaderSubscription = Observable
             .fromCallable {
                 val stream = streamFn().buffered(16)
-                openStream = stream
+                openStream = process(stream)
 
-                ImageUtil.findImageType(stream) == ImageUtil.ImageType.GIF
+                ImageUtil.isAnimatedAndSupported(stream)
             }
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
@@ -305,19 +302,26 @@ class WebtoonPageHolder(
         addSubscription(readImageHeaderSubscription)
     }
 
+    private fun process(imageStream: InputStream): InputStream {
+        if (!viewer.config.dualPageSplit) {
+            return imageStream
+        }
+
+        val isDoublePage = ImageUtil.isDoublePage(imageStream)
+        if (!isDoublePage) {
+            return imageStream
+        }
+
+        val upperSide = if (viewer.config.dualPageInvert) ImageUtil.Side.LEFT else ImageUtil.Side.RIGHT
+        return ImageUtil.splitAndMerge(imageStream, upperSide)
+    }
+
     /**
      * Called when the page has an error.
      */
     private fun setError() {
         progressContainer.isVisible = false
         initRetryLayout().isVisible = true
-    }
-
-    /**
-     * Called when the image is decoded and going to be displayed.
-     */
-    private fun onImageDecoded() {
-        progressContainer.isVisible = false
     }
 
     /**
@@ -331,16 +335,14 @@ class WebtoonPageHolder(
     /**
      * Creates a new progress bar.
      */
-    @SuppressLint("PrivateResource")
-    private fun createProgressBar(): ReaderProgressBar {
+    private fun createProgressIndicator(): ReaderProgressIndicator {
         progressContainer = FrameLayout(context)
         frame.addView(progressContainer, MATCH_PARENT, parentHeight)
 
-        val progress = ReaderProgressBar(context).apply {
-            val size = 48.dpToPx
-            layoutParams = FrameLayout.LayoutParams(size, size).apply {
+        val progress = ReaderProgressIndicator(context).apply {
+            updateLayoutParams<FrameLayout.LayoutParams> {
                 gravity = Gravity.CENTER_HORIZONTAL
-                setMargins(0, parentHeight / 4, 0, 0)
+                updateMargins(top = parentHeight / 4)
             }
         }
         progressContainer.addView(progress)
@@ -351,23 +353,27 @@ class WebtoonPageHolder(
      * Initializes a subsampling scale view.
      */
     private fun initSubsamplingImageView(): SubsamplingScaleImageView {
-        if (subsamplingImageView != null) return subsamplingImageView!!
-
         val config = viewer.config
 
+        if (subsamplingImageView != null) {
+            if (config.imageCropBorders != cropBorders) {
+                cropBorders = config.imageCropBorders
+                subsamplingImageView!!.setCropBorders(config.imageCropBorders)
+            }
+
+            return subsamplingImageView!!
+        }
+
+        cropBorders = config.imageCropBorders
         subsamplingImageView = WebtoonSubsamplingImageView(context).apply {
             setMaxTileSize(viewer.activity.maxBitmapSize)
             setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_INSIDE)
             setMinimumScaleType(SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH)
             setMinimumDpi(90)
             setMinimumTileDpi(180)
-            setCropBorders(config.imageCropBorders)
+            setCropBorders(cropBorders)
             setOnImageEventListener(
                 object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
-                    override fun onReady() {
-                        onImageDecoded()
-                    }
-
                     override fun onImageLoadError(e: Exception) {
                         onImageDecodeError()
                     }
@@ -489,38 +495,23 @@ class WebtoonPageHolder(
      * Extension method to set a [stream] into this ImageView.
      */
     private fun ImageView.setImage(stream: InputStream) {
-        GlideApp.with(this)
-            .load(stream)
-            .skipMemoryCache(true)
-            .diskCacheStrategy(DiskCacheStrategy.NONE)
-            .transition(DrawableTransitionOptions.with(NoTransition.getFactory()))
-            .listener(
-                object : RequestListener<Drawable> {
-                    override fun onLoadFailed(
-                        e: GlideException?,
-                        model: Any?,
-                        target: Target<Drawable>?,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        onImageDecodeError()
-                        return false
+        val request = ImageRequest.Builder(context)
+            .data(ByteBuffer.wrap(stream.readBytes()))
+            .memoryCachePolicy(CachePolicy.DISABLED)
+            .diskCachePolicy(CachePolicy.DISABLED)
+            .target(
+                onSuccess = { result ->
+                    if (result is Animatable) {
+                        result.start()
                     }
-
-                    override fun onResourceReady(
-                        resource: Drawable?,
-                        model: Any?,
-                        target: Target<Drawable>?,
-                        dataSource: DataSource?,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        if (resource is GifDrawable) {
-                            resource.setLoopCount(GifDrawable.LOOP_INTRINSIC)
-                        }
-                        onImageDecoded()
-                        return false
-                    }
+                    setImageDrawable(result)
+                },
+                onError = {
+                    onImageDecodeError()
                 }
             )
-            .into(this)
+            .crossfade(false)
+            .build()
+        context.imageLoader.enqueue(request)
     }
 }

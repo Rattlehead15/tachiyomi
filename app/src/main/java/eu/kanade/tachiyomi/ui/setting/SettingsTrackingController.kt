@@ -1,24 +1,33 @@
 package eu.kanade.tachiyomi.ui.setting
 
 import android.app.Activity
+import android.view.Menu
+import android.view.MenuInflater
+import android.view.MenuItem
+import android.widget.Toast
+import androidx.preference.PreferenceGroup
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.track.NoLoginTrackService
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.data.track.anilist.AnilistApi
 import eu.kanade.tachiyomi.data.track.bangumi.BangumiApi
 import eu.kanade.tachiyomi.data.track.myanimelist.MyAnimeListApi
 import eu.kanade.tachiyomi.data.track.shikimori.ShikimoriApi
+import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.ui.setting.track.TrackLoginDialog
 import eu.kanade.tachiyomi.ui.setting.track.TrackLogoutDialog
+import eu.kanade.tachiyomi.util.preference.add
 import eu.kanade.tachiyomi.util.preference.defaultValue
+import eu.kanade.tachiyomi.util.preference.iconRes
 import eu.kanade.tachiyomi.util.preference.infoPreference
-import eu.kanade.tachiyomi.util.preference.initThenAdd
 import eu.kanade.tachiyomi.util.preference.onClick
 import eu.kanade.tachiyomi.util.preference.preferenceCategory
 import eu.kanade.tachiyomi.util.preference.switchPreference
 import eu.kanade.tachiyomi.util.preference.titleRes
 import eu.kanade.tachiyomi.util.system.openInBrowser
+import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.widget.preference.LoginPreference
 import uy.kohesive.injekt.injectLazy
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys as Keys
@@ -29,6 +38,7 @@ class SettingsTrackingController :
     TrackLogoutDialog.Listener {
 
     private val trackManager: TrackManager by injectLazy()
+    private val sourceManager: SourceManager by injectLazy()
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) = screen.apply {
         titleRes = R.string.pref_category_tracking
@@ -38,6 +48,7 @@ class SettingsTrackingController :
             titleRes = R.string.pref_auto_update_manga_sync
             defaultValue = true
         }
+
         preferenceCategory {
             titleRes = R.string.services
 
@@ -58,27 +69,49 @@ class SettingsTrackingController :
             trackPreference(trackManager.bangumi) {
                 activity?.openInBrowser(BangumiApi.authUrl(), trackManager.bangumi.getLogoColor())
             }
-        }
-        preferenceCategory {
+
             infoPreference(R.string.tracking_info)
+        }
+
+        preferenceCategory {
+            titleRes = R.string.enhanced_services
+
+            trackPreference(trackManager.komga) {
+                val acceptedSources = trackManager.komga.getAcceptedSources()
+                val hasValidSourceInstalled = sourceManager.getCatalogueSources()
+                    .any { it::class.qualifiedName in acceptedSources }
+
+                if (hasValidSourceInstalled) {
+                    trackManager.komga.loginNoop()
+                    updatePreference(trackManager.komga.id)
+                } else {
+                    context.toast(R.string.tracker_komga_warning, Toast.LENGTH_LONG)
+                }
+            }
+
+            infoPreference(R.string.enhanced_tracking_info)
         }
     }
 
-    private inline fun PreferenceScreen.trackPreference(
+    private inline fun PreferenceGroup.trackPreference(
         service: TrackService,
         crossinline login: () -> Unit
     ): LoginPreference {
-        return initThenAdd(
+        return add(
             LoginPreference(context).apply {
                 key = Keys.trackUsername(service.id)
-                title = service.name
-            },
-            {
+                titleRes = service.nameRes()
+                iconRes = service.getLogo()
                 onClick {
                     if (service.isLogged) {
-                        val dialog = TrackLogoutDialog(service)
-                        dialog.targetController = this@SettingsTrackingController
-                        dialog.showDialog(router)
+                        if (service is NoLoginTrackService) {
+                            service.logout()
+                            updatePreference(service.id)
+                        } else {
+                            val dialog = TrackLogoutDialog(service)
+                            dialog.targetController = this@SettingsTrackingController
+                            dialog.showDialog(router)
+                        }
                     } else {
                         login()
                     }
@@ -97,6 +130,17 @@ class SettingsTrackingController :
         updatePreference(trackManager.bangumi.id)
     }
 
+    override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
+        inflater.inflate(R.menu.settings_tracking, menu)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when (item.itemId) {
+            R.id.action_tracking_help -> activity?.openInBrowser(HELP_URL)
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
     private fun updatePreference(id: Int) {
         val pref = findPreference(Keys.trackUsername(id)) as? LoginPreference
         pref?.notifyChanged()
@@ -110,3 +154,5 @@ class SettingsTrackingController :
         updatePreference(service.id)
     }
 }
+
+private const val HELP_URL = "https://tachiyomi.org/help/guides/tracking/"

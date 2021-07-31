@@ -8,9 +8,9 @@ import android.os.Bundle
 import android.os.Environment
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import androidx.core.text.buildSpannedString
 import androidx.preference.PreferenceScreen
-import com.afollestad.materialdialogs.MaterialDialog
-import com.afollestad.materialdialogs.list.listItemsSingleChoice
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.DatabaseHelper
@@ -21,13 +21,14 @@ import eu.kanade.tachiyomi.ui.base.controller.DialogController
 import eu.kanade.tachiyomi.util.preference.defaultValue
 import eu.kanade.tachiyomi.util.preference.entriesRes
 import eu.kanade.tachiyomi.util.preference.intListPreference
-import eu.kanade.tachiyomi.util.preference.multiSelectListPreference
 import eu.kanade.tachiyomi.util.preference.onClick
 import eu.kanade.tachiyomi.util.preference.preference
 import eu.kanade.tachiyomi.util.preference.preferenceCategory
 import eu.kanade.tachiyomi.util.preference.switchPreference
 import eu.kanade.tachiyomi.util.preference.titleRes
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.widget.materialdialogs.QuadStateTextView
+import eu.kanade.tachiyomi.widget.materialdialogs.setQuadStateMultiChoiceItems
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import uy.kohesive.injekt.Injekt
@@ -98,34 +99,54 @@ class SettingsDownloadController : SettingsController() {
         val categories = listOf(Category.createDefault()) + dbCategories
 
         preferenceCategory {
-            titleRes = R.string.pref_download_new
+            titleRes = R.string.pref_category_auto_download
 
             switchPreference {
                 key = Keys.downloadNew
                 titleRes = R.string.pref_download_new
                 defaultValue = false
             }
-            multiSelectListPreference {
+            preference {
                 key = Keys.downloadNewCategories
-                titleRes = R.string.pref_download_new_categories
-                entries = categories.map { it.name }.toTypedArray()
-                entryValues = categories.map { it.id.toString() }.toTypedArray()
+                titleRes = R.string.categories
+                onClick {
+                    DownloadCategoriesDialog().showDialog(router)
+                }
 
                 preferences.downloadNew().asImmediateFlow { isVisible = it }
                     .launchIn(viewScope)
 
-                preferences.downloadNewCategories().asFlow()
-                    .onEach { mutableSet ->
-                        val selectedCategories = mutableSet
-                            .mapNotNull { id -> categories.find { it.id == id.toInt() } }
-                            .sortedBy { it.order }
-
-                        summary = if (selectedCategories.isEmpty()) {
-                            resources?.getString(R.string.all)
-                        } else {
-                            selectedCategories.joinToString { it.name }
-                        }
+                fun updateSummary() {
+                    val selectedCategories = preferences.downloadNewCategories().get()
+                        .mapNotNull { id -> categories.find { it.id == id.toInt() } }
+                        .sortedBy { it.order }
+                    val includedItemsText = if (selectedCategories.isEmpty()) {
+                        context.getString(R.string.all)
+                    } else {
+                        selectedCategories.joinToString { it.name }
                     }
+
+                    val excludedCategories = preferences.downloadNewCategoriesExclude().get()
+                        .mapNotNull { id -> categories.find { it.id == id.toInt() } }
+                        .sortedBy { it.order }
+                    val excludedItemsText = if (excludedCategories.isEmpty()) {
+                        context.getString(R.string.none)
+                    } else {
+                        excludedCategories.joinToString { it.name }
+                    }
+
+                    summary = buildSpannedString {
+                        append(context.getString(R.string.include, includedItemsText))
+                        appendLine()
+                        append(context.getString(R.string.exclude, excludedItemsText))
+                    }
+                }
+
+                preferences.downloadNewCategories().asFlow()
+                    .onEach { updateSummary() }
+                    .launchIn(viewScope)
+                preferences.downloadNewCategoriesExclude().asFlow()
+                    .onEach { updateSummary() }
                     .launchIn(viewScope)
             }
         }
@@ -172,20 +193,22 @@ class SettingsDownloadController : SettingsController() {
             val activity = activity!!
             val currentDir = preferences.downloadsDirectory().get()
             val externalDirs = (getExternalDirs() + File(activity.getString(R.string.custom_dir))).map(File::toString)
-            val selectedIndex = externalDirs.indexOfFirst { it in currentDir }
+            var selectedIndex = externalDirs.indexOfFirst { it in currentDir }
 
-            return MaterialDialog(activity)
-                .listItemsSingleChoice(
-                    items = externalDirs,
-                    initialSelection = selectedIndex
-                ) { _, position, text ->
+            return MaterialAlertDialogBuilder(activity)
+                .setTitle(R.string.pref_download_directory)
+                .setSingleChoiceItems(externalDirs.toTypedArray(), selectedIndex) { _, which ->
+                    selectedIndex = which
+                }
+                .setPositiveButton(android.R.string.ok) { _, _ ->
                     val target = targetController as? SettingsDownloadController
-                    if (position == externalDirs.lastIndex) {
+                    if (selectedIndex == externalDirs.lastIndex) {
                         target?.customDirectorySelected()
                     } else {
-                        target?.predefinedDirectorySelected(text.toString())
+                        target?.predefinedDirectorySelected(externalDirs[selectedIndex])
                     }
                 }
+                .create()
         }
 
         private fun getExternalDirs(): List<File> {
@@ -195,6 +218,55 @@ class SettingsDownloadController : SettingsController() {
 
             return mutableListOf(File(defaultDir)) +
                 ContextCompat.getExternalFilesDirs(activity!!, "").filterNotNull()
+        }
+    }
+
+    class DownloadCategoriesDialog : DialogController() {
+
+        private val preferences: PreferencesHelper = Injekt.get()
+        private val db: DatabaseHelper = Injekt.get()
+
+        override fun onCreateDialog(savedViewState: Bundle?): Dialog {
+            val dbCategories = db.getCategories().executeAsBlocking()
+            val categories = listOf(Category.createDefault()) + dbCategories
+
+            val items = categories.map { it.name }
+            var selected = categories
+                .map {
+                    when (it.id.toString()) {
+                        in preferences.downloadNewCategories().get() -> QuadStateTextView.State.CHECKED.ordinal
+                        in preferences.downloadNewCategoriesExclude().get() -> QuadStateTextView.State.INVERSED.ordinal
+                        else -> QuadStateTextView.State.UNCHECKED.ordinal
+                    }
+                }
+                .toIntArray()
+
+            return MaterialAlertDialogBuilder(activity!!)
+                .setTitle(R.string.categories)
+                .setQuadStateMultiChoiceItems(
+                    message = R.string.pref_download_new_categories_details,
+                    items = items,
+                    initialSelected = selected
+                ) { selections ->
+                    selected = selections
+                }
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    val included = selected
+                        .mapIndexed { index, value -> if (value == QuadStateTextView.State.CHECKED.ordinal) index else null }
+                        .filterNotNull()
+                        .map { categories[it].id.toString() }
+                        .toSet()
+                    val excluded = selected
+                        .mapIndexed { index, value -> if (value == QuadStateTextView.State.INVERSED.ordinal) index else null }
+                        .filterNotNull()
+                        .map { categories[it].id.toString() }
+                        .toSet()
+
+                    preferences.downloadNewCategories().set(included)
+                    preferences.downloadNewCategoriesExclude().set(excluded)
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .create()
         }
     }
 

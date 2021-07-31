@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.track.kitsu
 
 import android.content.Context
 import android.graphics.Color
+import androidx.annotation.StringRes
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackService
@@ -20,12 +21,12 @@ class Kitsu(private val context: Context, id: Int) : TrackService(id) {
         const val ON_HOLD = 3
         const val DROPPED = 4
         const val PLAN_TO_READ = 5
-
-        const val DEFAULT_STATUS = READING
-        const val DEFAULT_SCORE = 0f
     }
 
-    override val name = "Kitsu"
+    @StringRes
+    override fun nameRes() = R.string.tracker_kitsu
+
+    override val supportsReadingDates: Boolean = true
 
     private val json: Json by injectLazy()
 
@@ -52,6 +53,10 @@ class Kitsu(private val context: Context, id: Int) : TrackService(id) {
         }
     }
 
+    override fun getReadingStatus(): Int = READING
+
+    override fun getRereadingStatus(): Int = -1
+
     override fun getCompletionStatus(): Int = COMPLETED
 
     override fun getScoreList(): List<String> {
@@ -68,23 +73,34 @@ class Kitsu(private val context: Context, id: Int) : TrackService(id) {
         return df.format(track.score)
     }
 
-    override suspend fun add(track: Track): Track {
+    private suspend fun add(track: Track): Track {
         return api.addLibManga(track, getUserId())
     }
 
-    override suspend fun update(track: Track): Track {
+    override suspend fun update(track: Track, didReadChapter: Boolean): Track {
+        if (track.status != COMPLETED) {
+            if (didReadChapter) {
+                track.status = READING
+            }
+        }
+
         return api.updateLibManga(track)
     }
 
-    override suspend fun bind(track: Track): Track {
+    override suspend fun bind(track: Track, hasReadChapters: Boolean): Track {
         val remoteTrack = api.findLibManga(track, getUserId())
         return if (remoteTrack != null) {
             track.copyPersonalFrom(remoteTrack)
             track.media_id = remoteTrack.media_id
+
+            if (track.status != COMPLETED) {
+                track.status = if (hasReadChapters) READING else track.status
+            }
+
             update(track)
         } else {
-            track.score = DEFAULT_SCORE
-            track.status = DEFAULT_STATUS
+            track.status = if (hasReadChapters) READING else PLAN_TO_READ
+            track.score = 0F
             add(track)
         }
     }
@@ -101,14 +117,10 @@ class Kitsu(private val context: Context, id: Int) : TrackService(id) {
     }
 
     override suspend fun login(username: String, password: String) {
-        try {
-            val token = api.login(username, password)
-            interceptor.newAuth(token)
-            val userId = api.getCurrentUser()
-            saveCredentials(username, userId)
-        } catch (e: Throwable) {
-            logout()
-        }
+        val token = api.login(username, password)
+        interceptor.newAuth(token)
+        val userId = api.getCurrentUser()
+        saveCredentials(username, userId)
     }
 
     override fun logout() {

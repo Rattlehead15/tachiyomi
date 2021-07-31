@@ -1,8 +1,9 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.annotation.SuppressLint
+import android.app.ActionBar
 import android.graphics.PointF
-import android.graphics.drawable.Drawable
+import android.graphics.drawable.Animatable
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
@@ -14,22 +15,18 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.isVisible
-import com.bumptech.glide.load.DataSource
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.engine.GlideException
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
-import com.bumptech.glide.load.resource.gif.GifDrawable
-import com.bumptech.glide.request.RequestListener
-import com.bumptech.glide.request.target.Target
-import com.bumptech.glide.request.transition.NoTransition
+import androidx.core.view.updateLayoutParams
+import coil.imageLoader
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.github.chrisbanes.photoview.PhotoView
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.glide.GlideApp
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressBar
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerConfig.ZoomType
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.ImageUtil
@@ -40,6 +37,7 @@ import rx.Subscription
 import rx.android.schedulers.AndroidSchedulers
 import rx.schedulers.Schedulers
 import java.io.InputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 
 /**
@@ -60,7 +58,11 @@ class PagerPageHolder(
     /**
      * Loading progress bar to indicate the current progress.
      */
-    private val progressBar = createProgressBar()
+    private val progressIndicator = ReaderProgressIndicator(context).apply {
+        updateLayoutParams<LayoutParams> {
+            gravity = Gravity.CENTER
+        }
+    }
 
     /**
      * Image view that supports subsampling on zoom.
@@ -98,9 +100,31 @@ class PagerPageHolder(
      */
     private var readImageHeaderSubscription: Subscription? = null
 
+    val stateChangedListener = object : SubsamplingScaleImageView.OnStateChangedListener {
+        override fun onScaleChanged(newScale: Float, origin: Int) {
+            viewer.activity.hideMenu()
+        }
+
+        override fun onCenterChanged(newCenter: PointF?, origin: Int) {
+            viewer.activity.hideMenu()
+        }
+    }
+    private var visibilityListener = ActionBar.OnMenuVisibilityListener { isVisible ->
+        if (isVisible.not()) {
+            subsamplingImageView?.setOnStateChangedListener(null)
+            return@OnMenuVisibilityListener
+        }
+        subsamplingImageView?.setOnStateChangedListener(stateChangedListener)
+    }
+
     init {
-        addView(progressBar)
+        addView(progressIndicator)
         observeStatus()
+        viewer.activity.addOnMenuVisibilityListener(visibilityListener)
+        if (viewer.activity.menuVisible) {
+            // Listener will not be available if user changed page with seek bar
+            subsamplingImageView?.setOnStateChangedListener(stateChangedListener)
+        }
     }
 
     /**
@@ -113,6 +137,8 @@ class PagerPageHolder(
         unsubscribeStatus()
         unsubscribeReadImageHeader()
         subsamplingImageView?.setOnImageEventListener(null)
+        subsamplingImageView?.setOnStateChangedListener(null)
+        viewer.activity.removeOnMenuVisibilityListener(visibilityListener)
     }
 
     /**
@@ -140,7 +166,7 @@ class PagerPageHolder(
             .distinctUntilChanged()
             .onBackpressureLatest()
             .observeOn(AndroidSchedulers.mainThread())
-            .subscribe { value -> progressBar.setProgress(value) }
+            .subscribe { value -> progressIndicator.setProgress(value) }
     }
 
     /**
@@ -195,7 +221,7 @@ class PagerPageHolder(
      * Called when the page is queued.
      */
     private fun setQueued() {
-        progressBar.isVisible = true
+        progressIndicator.show()
         retryButton?.isVisible = false
         decodeErrorLayout?.isVisible = false
     }
@@ -204,7 +230,7 @@ class PagerPageHolder(
      * Called when the page is loading.
      */
     private fun setLoading() {
-        progressBar.isVisible = true
+        progressIndicator.show()
         retryButton?.isVisible = false
         decodeErrorLayout?.isVisible = false
     }
@@ -213,7 +239,7 @@ class PagerPageHolder(
      * Called when the page is downloading.
      */
     private fun setDownloading() {
-        progressBar.isVisible = true
+        progressIndicator.show()
         retryButton?.isVisible = false
         decodeErrorLayout?.isVisible = false
     }
@@ -222,8 +248,7 @@ class PagerPageHolder(
      * Called when the page is ready.
      */
     private fun setImage() {
-        progressBar.isVisible = true
-        progressBar.completeAndFadeOut()
+        progressIndicator.setCompleteProgressAndHide()
         retryButton?.isVisible = false
         decodeErrorLayout?.isVisible = false
 
@@ -234,15 +259,20 @@ class PagerPageHolder(
         readImageHeaderSubscription = Observable
             .fromCallable {
                 val stream = streamFn().buffered(16)
-                openStream = stream
+                openStream = process(item, stream)
 
-                ImageUtil.findImageType(stream) == ImageUtil.ImageType.GIF
+                ImageUtil.isAnimatedAndSupported(stream)
             }
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
             .doOnNext { isAnimated ->
                 if (!isAnimated) {
-                    initSubsamplingImageView().setImage(ImageSource.inputStream(openStream!!))
+                    initSubsamplingImageView().apply {
+                        if (viewer.config.automaticBackground) {
+                            background = ImageUtil.chooseBackground(context, openStream!!)
+                        }
+                        setImage(ImageSource.inputStream(openStream!!))
+                    }
                 } else {
                     initImageView().setImage(openStream!!)
                 }
@@ -253,40 +283,63 @@ class PagerPageHolder(
             .subscribe({}, {})
     }
 
+    private fun process(page: ReaderPage, imageStream: InputStream): InputStream {
+        if (!viewer.config.dualPageSplit) {
+            return imageStream
+        }
+
+        if (page is InsertPage) {
+            return splitInHalf(imageStream)
+        }
+
+        val isDoublePage = ImageUtil.isDoublePage(imageStream)
+        if (!isDoublePage) {
+            return imageStream
+        }
+
+        onPageSplit(page)
+
+        return splitInHalf(imageStream)
+    }
+
+    private fun splitInHalf(imageStream: InputStream): InputStream {
+        var side = when {
+            viewer is L2RPagerViewer && page is InsertPage -> ImageUtil.Side.RIGHT
+            viewer !is L2RPagerViewer && page is InsertPage -> ImageUtil.Side.LEFT
+            viewer is L2RPagerViewer && page !is InsertPage -> ImageUtil.Side.LEFT
+            viewer !is L2RPagerViewer && page !is InsertPage -> ImageUtil.Side.RIGHT
+            else -> error("We should choose a side!")
+        }
+
+        if (viewer.config.dualPageInvert) {
+            side = when (side) {
+                ImageUtil.Side.RIGHT -> ImageUtil.Side.LEFT
+                ImageUtil.Side.LEFT -> ImageUtil.Side.RIGHT
+            }
+        }
+
+        return ImageUtil.splitInHalf(imageStream, side)
+    }
+
+    private fun onPageSplit(page: ReaderPage) {
+        val newPage = InsertPage(page)
+        viewer.onPageSplit(page, newPage)
+    }
+
     /**
      * Called when the page has an error.
      */
     private fun setError() {
-        progressBar.isVisible = false
+        progressIndicator.hide()
         initRetryButton().isVisible = true
-    }
-
-    /**
-     * Called when the image is decoded and going to be displayed.
-     */
-    private fun onImageDecoded() {
-        progressBar.isVisible = false
     }
 
     /**
      * Called when an image fails to decode.
      */
     private fun onImageDecodeError() {
-        progressBar.isVisible = false
+        progressIndicator.hide()
         initDecodeErrorLayout().isVisible = true
-    }
-
-    /**
-     * Creates a new progress bar.
-     */
-    @SuppressLint("PrivateResource")
-    private fun createProgressBar(): ReaderProgressBar {
-        return ReaderProgressBar(context, null).apply {
-            val size = 48.dpToPx
-            layoutParams = LayoutParams(size, size).apply {
-                gravity = Gravity.CENTER
-            }
-        }
     }
 
     /**
@@ -315,7 +368,6 @@ class PagerPageHolder(
                             ZoomType.Right -> setScaleAndCenter(scale, PointF(sWidth.toFloat(), 0f))
                             ZoomType.Center -> setScaleAndCenter(scale, center.also { it?.y = 0f })
                         }
-                        onImageDecoded()
                     }
 
                     override fun onImageLoadError(e: Exception) {
@@ -436,38 +488,23 @@ class PagerPageHolder(
      * Extension method to set a [stream] into this ImageView.
      */
     private fun ImageView.setImage(stream: InputStream) {
-        GlideApp.with(this)
-            .load(stream)
-            .skipMemoryCache(true)
-            .diskCacheStrategy(DiskCacheStrategy.NONE)
-            .transition(DrawableTransitionOptions.with(NoTransition.getFactory()))
-            .listener(
-                object : RequestListener<Drawable> {
-                    override fun onLoadFailed(
-                        e: GlideException?,
-                        model: Any?,
-                        target: Target<Drawable>?,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        onImageDecodeError()
-                        return false
+        val request = ImageRequest.Builder(context)
+            .data(ByteBuffer.wrap(stream.readBytes()))
+            .memoryCachePolicy(CachePolicy.DISABLED)
+            .diskCachePolicy(CachePolicy.DISABLED)
+            .target(
+                onSuccess = { result ->
+                    if (result is Animatable) {
+                        result.start()
                     }
-
-                    override fun onResourceReady(
-                        resource: Drawable?,
-                        model: Any?,
-                        target: Target<Drawable>?,
-                        dataSource: DataSource?,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        if (resource is GifDrawable) {
-                            resource.setLoopCount(GifDrawable.LOOP_INTRINSIC)
-                        }
-                        onImageDecoded()
-                        return false
-                    }
+                    setImageDrawable(result)
+                },
+                onError = {
+                    onImageDecodeError()
                 }
             )
-            .into(this)
+            .crossfade(false)
+            .build()
+        context.imageLoader.enqueue(request)
     }
 }

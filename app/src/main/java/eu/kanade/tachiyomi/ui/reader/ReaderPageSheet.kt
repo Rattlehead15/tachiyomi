@@ -1,13 +1,13 @@
 package eu.kanade.tachiyomi.ui.reader
 
-import android.os.Bundle
-import android.view.ViewGroup
-import com.afollestad.materialdialogs.MaterialDialog
-import com.google.android.material.bottomsheet.BottomSheetDialog
+import android.view.LayoutInflater
+import android.view.View
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.databinding.ReaderPageSheetBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.widget.sheet.BaseBottomSheetDialog
 
 /**
  * Sheet to show when a page is long clicked.
@@ -15,24 +15,18 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 class ReaderPageSheet(
     private val activity: ReaderActivity,
     private val page: ReaderPage
-) : BottomSheetDialog(activity) {
+) : BaseBottomSheetDialog(activity) {
 
-    private val binding = ReaderPageSheetBinding.inflate(activity.layoutInflater, null, false)
+    private lateinit var binding: ReaderPageSheetBinding
 
-    init {
-        setContentView(binding.root)
+    override fun createView(inflater: LayoutInflater): View {
+        binding = ReaderPageSheetBinding.inflate(activity.layoutInflater, null, false)
 
         binding.setAsCoverLayout.setOnClickListener { setAsCover() }
         binding.shareLayout.setOnClickListener { share() }
         binding.saveLayout.setOnClickListener { save() }
-    }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val width = context.resources.getDimensionPixelSize(R.dimen.bottom_sheet_width)
-        if (width > 0) {
-            window?.setLayout(width, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
+        return binding.root
     }
 
     /**
@@ -41,13 +35,12 @@ class ReaderPageSheet(
     private fun setAsCover() {
         if (page.status != Page.READY) return
 
-        MaterialDialog(activity)
-            .message(R.string.confirm_set_image_as_cover)
-            .positiveButton(android.R.string.ok) {
+        MaterialAlertDialogBuilder(activity)
+            .setMessage(R.string.confirm_set_image_as_cover)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
                 activity.setAsCover(page)
-                dismiss()
             }
-            .negativeButton(android.R.string.cancel)
+            .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 

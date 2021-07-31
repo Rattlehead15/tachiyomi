@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.track.myanimelist
 
 import android.content.Context
 import android.graphics.Color
+import androidx.annotation.StringRes
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackService
@@ -30,8 +31,10 @@ class MyAnimeList(private val context: Context, id: Int) : TrackService(id) {
     private val interceptor by lazy { MyAnimeListInterceptor(this, getPassword()) }
     private val api by lazy { MyAnimeListApi(client, interceptor) }
 
-    override val name: String
-        get() = "MyAnimeList"
+    @StringRes
+    override fun nameRes() = R.string.tracker_myanimelist
+
+    override val supportsReadingDates: Boolean = true
 
     override fun getLogo() = R.drawable.ic_tracker_mal
 
@@ -53,6 +56,10 @@ class MyAnimeList(private val context: Context, id: Int) : TrackService(id) {
         }
     }
 
+    override fun getReadingStatus(): Int = READING
+
+    override fun getRereadingStatus(): Int = REREADING
+
     override fun getCompletionStatus(): Int = COMPLETED
 
     override fun getScoreList(): List<String> {
@@ -63,21 +70,36 @@ class MyAnimeList(private val context: Context, id: Int) : TrackService(id) {
         return track.score.toInt().toString()
     }
 
-    override suspend fun add(track: Track): Track {
-        return api.addItemToList(track)
-    }
-
-    override suspend fun update(track: Track): Track {
+    private suspend fun add(track: Track): Track {
         return api.updateItem(track)
     }
 
-    override suspend fun bind(track: Track): Track {
+    override suspend fun update(track: Track, didReadChapter: Boolean): Track {
+        if (track.status != COMPLETED) {
+            if (track.status != REREADING && didReadChapter) {
+                track.status = READING
+            }
+        }
+
+        return api.updateItem(track)
+    }
+
+    override suspend fun bind(track: Track, hasReadChapters: Boolean): Track {
         val remoteTrack = api.findListItem(track)
         return if (remoteTrack != null) {
             track.copyPersonalFrom(remoteTrack)
             track.media_id = remoteTrack.media_id
+
+            if (track.status != COMPLETED) {
+                val isRereading = track.status == REREADING
+                track.status = if (isRereading.not() && hasReadChapters) READING else track.status
+            }
+
             update(track)
         } else {
+            // Set default fields if it's not found in the list
+            track.status = if (hasReadChapters) READING else PLAN_TO_READ
+            track.score = 0F
             add(track)
         }
     }
@@ -99,7 +121,7 @@ class MyAnimeList(private val context: Context, id: Int) : TrackService(id) {
     }
 
     override suspend fun refresh(track: Track): Track {
-        return api.getListItem(track)
+        return api.findListItem(track) ?: add(track)
     }
 
     override suspend fun login(username: String, password: String) = login(password)

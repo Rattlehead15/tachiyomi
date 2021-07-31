@@ -4,8 +4,9 @@ import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import eu.kanade.tachiyomi.databinding.TrackItemBinding
+import eu.kanade.tachiyomi.util.view.applyElevationOverlay
 
-class TrackAdapter(controller: TrackController) : RecyclerView.Adapter<TrackHolder>() {
+class TrackAdapter(listener: OnClickListener) : RecyclerView.Adapter<TrackHolder>() {
 
     private lateinit var binding: TrackItemBinding
 
@@ -17,7 +18,7 @@ class TrackAdapter(controller: TrackController) : RecyclerView.Adapter<TrackHold
             }
         }
 
-    val rowClickListener: OnClickListener = controller
+    val rowClickListener: OnClickListener = listener
 
     fun getItem(index: Int): TrackItem? {
         return items.getOrNull(index)
@@ -29,6 +30,7 @@ class TrackAdapter(controller: TrackController) : RecyclerView.Adapter<TrackHold
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TrackHolder {
         binding = TrackItemBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+        binding.card.applyElevationOverlay()
         return TrackHolder(binding, this)
     }
 
@@ -37,11 +39,16 @@ class TrackAdapter(controller: TrackController) : RecyclerView.Adapter<TrackHold
     }
 
     interface OnClickListener {
-        fun onLogoClick(position: Int)
+        fun onOpenInBrowserClick(position: Int)
         fun onSetClick(position: Int)
         fun onTitleLongClick(position: Int)
         fun onStatusClick(position: Int)
         fun onChaptersClick(position: Int)
         fun onScoreClick(position: Int)
+        fun onStartDateEditClick(position: Int)
+        fun onStartDateRemoveClick(position: Int)
+        fun onFinishDateEditClick(position: Int)
+        fun onFinishDateRemoveClick(position: Int)
+        fun onRemoveItemClick(position: Int)
     }
 }

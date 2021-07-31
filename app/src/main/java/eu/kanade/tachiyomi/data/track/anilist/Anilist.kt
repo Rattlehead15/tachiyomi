@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.track.anilist
 
 import android.content.Context
 import android.graphics.Color
+import androidx.annotation.StringRes
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackService
@@ -21,9 +22,6 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
         const val PLANNING = 5
         const val REPEATING = 6
 
-        const val DEFAULT_STATUS = READING
-        const val DEFAULT_SCORE = 0
-
         const val POINT_100 = "POINT_100"
         const val POINT_10 = "POINT_10"
         const val POINT_10_DECIMAL = "POINT_10_DECIMAL"
@@ -31,13 +29,13 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
         const val POINT_3 = "POINT_3"
     }
 
-    override val name = "AniList"
-
     private val json: Json by injectLazy()
 
     private val interceptor by lazy { AnilistInterceptor(this, getPassword()) }
 
     private val api by lazy { AnilistApi(client, interceptor) }
+
+    override val supportsReadingDates: Boolean = true
 
     private val scorePreference = preferences.anilistScoreType()
 
@@ -50,6 +48,9 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
             scorePreference.delete()
         }
     }
+
+    @StringRes
+    override fun nameRes() = R.string.tracker_anilist
 
     override fun getLogo() = R.drawable.ic_tracker_anilist
 
@@ -70,6 +71,10 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
             else -> ""
         }
     }
+
+    override fun getReadingStatus(): Int = READING
+
+    override fun getRereadingStatus(): Int = REPEATING
 
     override fun getCompletionStatus(): Int = COMPLETED
 
@@ -129,11 +134,11 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
         }
     }
 
-    override suspend fun add(track: Track): Track {
+    private suspend fun add(track: Track): Track {
         return api.addLibManga(track)
     }
 
-    override suspend fun update(track: Track): Track {
+    override suspend fun update(track: Track, didReadChapter: Boolean): Track {
         // If user was using API v1 fetch library_id
         if (track.library_id == null || track.library_id!! == 0L) {
             val libManga = api.findLibManga(track, getUsername().toInt())
@@ -141,19 +146,31 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
             track.library_id = libManga.library_id
         }
 
+        if (track.status != COMPLETED) {
+            if (track.status != REPEATING && didReadChapter) {
+                track.status = READING
+            }
+        }
+
         return api.updateLibManga(track)
     }
 
-    override suspend fun bind(track: Track): Track {
+    override suspend fun bind(track: Track, hasReadChapters: Boolean): Track {
         val remoteTrack = api.findLibManga(track, getUsername().toInt())
         return if (remoteTrack != null) {
             track.copyPersonalFrom(remoteTrack)
             track.library_id = remoteTrack.library_id
+
+            if (track.status != COMPLETED) {
+                val isRereading = track.status == REPEATING
+                track.status = if (isRereading.not() && hasReadChapters) READING else track.status
+            }
+
             update(track)
         } else {
             // Set default fields if it's not found in the list
-            track.score = DEFAULT_SCORE.toFloat()
-            track.status = DEFAULT_STATUS
+            track.status = if (hasReadChapters) READING else PLANNING
+            track.score = 0F
             add(track)
         }
     }

@@ -111,50 +111,23 @@ class MyAnimeListApi(private val client: OkHttpClient, interceptor: MyAnimeListI
         }
     }
 
-    suspend fun getListItem(track: Track): Track {
-        return withIOContext {
-            val formBody: RequestBody = FormBody.Builder()
-                .add("status", track.toMyAnimeListStatus() ?: "reading")
-                .build()
-            val request = Request.Builder()
-                .url(mangaUrl(track.media_id).toString())
-                .put(formBody)
-                .build()
-            authClient.newCall(request)
-                .await()
-                .parseAs<JsonObject>()
-                .let { parseMangaItem(it, track) }
-        }
-    }
-
-    suspend fun addItemToList(track: Track): Track {
-        return withIOContext {
-            val formBody: RequestBody = FormBody.Builder()
-                .add("status", "reading")
-                .add("score", "0")
-                .build()
-            val request = Request.Builder()
-                .url(mangaUrl(track.media_id).toString())
-                .put(formBody)
-                .build()
-            authClient.newCall(request)
-                .await()
-                .parseAs<JsonObject>()
-                .let { parseMangaItem(it, track) }
-        }
-    }
-
     suspend fun updateItem(track: Track): Track {
         return withIOContext {
-            val formBody: RequestBody = FormBody.Builder()
+            val formBodyBuilder = FormBody.Builder()
                 .add("status", track.toMyAnimeListStatus() ?: "reading")
                 .add("is_rereading", (track.status == MyAnimeList.REREADING).toString())
                 .add("score", track.score.toString())
                 .add("num_chapters_read", track.last_chapter_read.toString())
-                .build()
+            convertToIsoDate(track.started_reading_date)?.let {
+                formBodyBuilder.add("start_date", it)
+            }
+            convertToIsoDate(track.finished_reading_date)?.let {
+                formBodyBuilder.add("finish_date", it)
+            }
+
             val request = Request.Builder()
                 .url(mangaUrl(track.media_id).toString())
-                .put(formBody)
+                .put(formBodyBuilder.build())
                 .build()
             authClient.newCall(request)
                 .await()
@@ -167,13 +140,14 @@ class MyAnimeListApi(private val client: OkHttpClient, interceptor: MyAnimeListI
         return withIOContext {
             val uri = "$baseApiUrl/manga".toUri().buildUpon()
                 .appendPath(track.media_id.toString())
-                .appendQueryParameter("fields", "my_list_status{start_date,finish_date}")
+                .appendQueryParameter("fields", "num_chapters,my_list_status{start_date,finish_date}")
                 .build()
             authClient.newCall(GET(uri.toString()))
                 .await()
                 .parseAs<JsonObject>()
                 .let { obj ->
-                    obj.jsonObject["list_status"]?.jsonObject?.let {
+                    track.total_chapters = obj["num_chapters"]!!.jsonPrimitive.int
+                    obj.jsonObject["my_list_status"]?.jsonObject?.let {
                         parseMangaItem(it, track)
                     }
                 }
@@ -233,6 +207,28 @@ class MyAnimeListApi(private val client: OkHttpClient, interceptor: MyAnimeListI
             status = if (isRereading) MyAnimeList.REREADING else getStatus(obj["status"]!!.jsonPrimitive.content)
             last_chapter_read = obj["num_chapters_read"]!!.jsonPrimitive.int
             score = obj["score"]!!.jsonPrimitive.int.toFloat()
+            obj["start_date"]?.let {
+                started_reading_date = parseDate(it.jsonPrimitive.content)
+            }
+            obj["finish_date"]?.let {
+                finished_reading_date = parseDate(it.jsonPrimitive.content)
+            }
+        }
+    }
+
+    private fun parseDate(isoDate: String): Long {
+        return SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(isoDate)?.time ?: 0L
+    }
+
+    private fun convertToIsoDate(epochTime: Long): String? {
+        if (epochTime == 0L) {
+            return ""
+        }
+        return try {
+            val outputDf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            outputDf.format(epochTime)
+        } catch (e: Exception) {
+            null
         }
     }
 
