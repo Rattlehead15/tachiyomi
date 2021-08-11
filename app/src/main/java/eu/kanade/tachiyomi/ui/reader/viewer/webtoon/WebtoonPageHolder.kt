@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.ImageUtil
+import eu.kanade.tachiyomi.util.system.createReaderThemeContext
 import eu.kanade.tachiyomi.util.system.dpToPx
 import rx.Observable
 import rx.Subscription
@@ -266,7 +267,6 @@ class WebtoonPageHolder(
      */
     private fun setImage() {
         progressIndicator.setCompleteProgressAndHide()
-        progressContainer.isVisible = false
         retryContainer?.isVisible = false
         removeDecodeErrorLayout()
 
@@ -325,6 +325,13 @@ class WebtoonPageHolder(
     }
 
     /**
+     * Called when the image is decoded and going to be displayed.
+     */
+    private fun onImageDecoded() {
+        progressContainer.isVisible = false
+    }
+
+    /**
      * Called when the image fails to decode.
      */
     private fun onImageDecodeError() {
@@ -339,7 +346,8 @@ class WebtoonPageHolder(
         progressContainer = FrameLayout(context)
         frame.addView(progressContainer, MATCH_PARENT, parentHeight)
 
-        val progress = ReaderProgressIndicator(context).apply {
+        val indicatorContext = context.createReaderThemeContext(viewer.config.theme)
+        val progress = ReaderProgressIndicator(indicatorContext).apply {
             updateLayoutParams<FrameLayout.LayoutParams> {
                 gravity = Gravity.CENTER_HORIZONTAL
                 updateMargins(top = parentHeight / 4)
@@ -374,6 +382,10 @@ class WebtoonPageHolder(
             setCropBorders(cropBorders)
             setOnImageEventListener(
                 object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
+                    override fun onReady() {
+                        onImageDecoded()
+                    }
+
                     override fun onImageLoadError(e: Exception) {
                         onImageDecodeError()
                     }
@@ -505,6 +517,7 @@ class WebtoonPageHolder(
                         result.start()
                     }
                     setImageDrawable(result)
+                    onImageDecoded()
                 },
                 onError = {
                     onImageDecodeError()

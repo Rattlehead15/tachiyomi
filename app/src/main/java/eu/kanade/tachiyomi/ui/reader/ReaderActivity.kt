@@ -16,6 +16,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
@@ -24,6 +25,7 @@ import android.view.View.LAYER_TYPE_HARDWARE
 import android.view.WindowManager
 import android.view.animation.Animation
 import android.view.animation.AnimationUtils
+import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.Toast
 import androidx.core.graphics.ColorUtils
@@ -31,7 +33,6 @@ import androidx.core.view.*
 import androidx.lifecycle.lifecycleScope
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.google.android.material.shape.MaterialShapeDrawable
-import com.mikepenz.aboutlibraries.util.getThemeColor
 import dev.chrisbanes.insetter.applyInsetter
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Chapter
@@ -58,11 +59,14 @@ import eu.kanade.tachiyomi.ui.reader.translator.OCRManager
 import eu.kanade.tachiyomi.ui.reader.translator.OCRRectangleView
 import eu.kanade.tachiyomi.ui.reader.translator.OCRTranslationSheet
 import eu.kanade.tachiyomi.ui.reader.viewer.BaseViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
 import eu.kanade.tachiyomi.util.lang.launchIO
 import eu.kanade.tachiyomi.util.lang.launchUI
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.GLUtil
+import eu.kanade.tachiyomi.util.system.createReaderThemeContext
+import eu.kanade.tachiyomi.util.system.getThemeColor
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.util.system.toast
@@ -138,6 +142,8 @@ class ReaderActivity : BaseRxActivity<ReaderActivityBinding, ReaderPresenter>() 
 
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, binding.root) }
 
+    private var loadingIndicator: ReaderProgressIndicator? = null
+
     var isScrollingThroughPages = false
         private set
 
@@ -168,12 +174,6 @@ class ReaderActivity : BaseRxActivity<ReaderActivityBinding, ReaderPresenter>() 
 
         config = ReaderConfig()
         initializeMenu()
-
-        binding.pageNumber.applyInsetter {
-            type(navigationBars = true) {
-                margin()
-            }
-        }
 
         // Finish when incognito mode is disabled
         preferences.incognitoMode().asFlow()
@@ -638,8 +638,13 @@ class ReaderActivity : BaseRxActivity<ReaderActivityBinding, ReaderPresenter>() 
             binding.rightChapter.setTooltip(R.string.action_next_chapter)
         }
 
-        binding.pleaseWait.isVisible = true
-        binding.pleaseWait.startAnimation(AnimationUtils.loadAnimation(this, R.anim.fade_in_long))
+        val loadingIndicatorContext = createReaderThemeContext(preferences.readerTheme().get())
+        loadingIndicator = ReaderProgressIndicator(loadingIndicatorContext).apply {
+            updateLayoutParams<FrameLayout.LayoutParams> {
+                gravity = Gravity.CENTER
+            }
+        }
+        binding.readerContainer.addView(loadingIndicator)
     }
 
     private fun showReadingModeToast(mode: Int) {
@@ -658,7 +663,7 @@ class ReaderActivity : BaseRxActivity<ReaderActivityBinding, ReaderPresenter>() 
      * hides or disables the reader prev/next buttons if there's a prev or next chapter
      */
     fun setChapters(viewerChapters: ViewerChapters) {
-        binding.pleaseWait.isVisible = false
+        binding.readerContainer.removeView(loadingIndicator)
         viewer?.setChapters(viewerChapters)
         binding.toolbar.subtitle = viewerChapters.currChapter.chapter.name
 

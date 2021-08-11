@@ -141,7 +141,6 @@
 
       <!-- General section -->
     <string name="pref_category_theme">Theme</string>
-    <string name="pref_category_locale">Locale</string>
     <string name="pref_theme_mode">Dark mode</string>
     <string name="theme_system">Follow system</string>
     <string name="theme_light">Off</string>
@@ -158,7 +157,6 @@
     <string name="theme_yotsuba">Yotsuba</string>
     <string name="pref_dark_theme_pure_black">Pure black dark mode</string>
     <string name="pref_start_screen">Start screen</string>
-    <string name="pref_language">Language</string>
     <string name="system_default">Default</string>
     <string name="pref_date_format">Date format</string>
     <string name="pref_confirm_exit">Confirm exit</string>
@@ -360,6 +358,11 @@
     <string name="webtoon_side_padding_15">15%</string>
     <string name="webtoon_side_padding_20">20%</string>
     <string name="webtoon_side_padding_25">25%</string>
+    <string name="pref_hide_threshold">Auto hide menu on scroll sensitivity</string>
+    <string name="pref_highest">Highest</string>
+    <string name="pref_high">High</string>
+    <string name="pref_low">Low</string>
+    <string name="pref_lowest">Lowest</string>
 
       <!-- Downloads section -->
     <string name="pref_download_directory">Download location</string>
@@ -448,11 +451,12 @@
     <string name="pref_dump_crash_logs">Dump crash logs</string>
     <string name="pref_dump_crash_logs_summary">Saves error logs to a file for sharing with the developers</string>
     <string name="crash_log_saved">Crash logs saved</string>
+    <string name="label_background_activity">Background activity</string>
     <string name="pref_disable_battery_optimization">Disable battery optimization</string>
     <string name="pref_disable_battery_optimization_summary">Helps with background library updates and backups</string>
-    <string name="about_dont_kill_my_app">Some manufacturers have additional app restrictions that kill background services. This website has more info on how to fix it.</string>
     <string name="battery_optimization_disabled">Battery optimization is already disabled</string>
     <string name="battery_optimization_setting_activity_not_found">Couldn\'t open device settings</string>
+    <string name="about_dont_kill_my_app">Some manufacturers have additional app restrictions that kill background services. This website has more info on how to fix it.</string>
 
       <!-- About section -->
     <string name="website">Website</string>
