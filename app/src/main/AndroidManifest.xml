@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="eu.kanade.tachiyomi">
 
     <!-- Internet -->
@@ -22,6 +23,7 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application
+        tools:replace="android:allowBackup"
         android:name=".App"
         android:allowBackup="false"
         android:hardwareAccelerated="true"
@@ -198,5 +200,8 @@
         </provider>
 
     </application>
+    <queries>
+        <package android:name="com.ichi2.anki" />
+    </queries>
 
 </manifest>

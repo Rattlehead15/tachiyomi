@@ -2,7 +2,10 @@ package eu.kanade.tachiyomi.ui.reader.translator
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.view.inputmethod.InputMethodManager
+import android.widget.TextView
+import android.widget.Toast
 import androidx.core.view.isVisible
 import androidx.room.Room
 import ca.fuwafuwa.kaku.DB_JMDICT_NAME
@@ -11,50 +14,105 @@ import ca.fuwafuwa.kaku.Deinflictor.DeinflectionInfo
 import ca.fuwafuwa.kaku.Deinflictor.Deinflector
 import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.ichi2.anki.api.AddContentApi
+import com.ichi2.anki.api.AddContentApi.READ_WRITE_PERMISSION
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.databinding.DictionaryEntryBinding
+import eu.kanade.tachiyomi.databinding.OcrResultCharacterBinding
 import eu.kanade.tachiyomi.databinding.OcrTranslationSheetBinding
 import eu.kanade.tachiyomi.util.lang.launchUI
 import java.util.*
+import java.util.Collections.rotate
 import kotlin.collections.HashSet
 
-class OCRTranslationSheet(activity: Activity, searchText: String) : BottomSheetDialog(activity) {
+class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<String>> = listOf()) : BottomSheetDialog(activity) {
     private val binding = OcrTranslationSheetBinding.inflate(layoutInflater, null, false)
     private val db: JmdictDatabase
     private val mDeinflector: Deinflector = Deinflector(context)
+    private val ocrResultText: String
+        get() = ocrResult.joinToString("") { it.first() }
 
     init {
         setContentView(binding.root)
+        setOwnerActivity(activity)
         db = Room.databaseBuilder(context, JmdictDatabase::class.java, "JMDict.db").createFromAsset("DB_KakuDict-02-16-2019.db").build()
-        binding.ocrResultText.setHorizontallyScrolling(false)
-        binding.ocrResultText.ellipsize = null
-        binding.ocrResultText.setText(searchText.filter { !it.isWhitespace() })
-        binding.searchOCRResult.setOnClickListener { launchUI { searchText() } }
+        binding.lookupText.setHorizontallyScrolling(false)
+        binding.lookupText.ellipsize = null
+        binding.lookupButton.setOnClickListener { launchUI { searchText(binding.lookupText.text.toString()) } }
+        for (i in ocrResult.indices) {
+            val butt = OcrResultCharacterBinding.inflate(layoutInflater, binding.ocrCharacters, true)
+            butt.character.text = ocrResult[i].first()
+            butt.character.setOnClickListener { launchUI { searchText(ocrResultText, i) } }
+            butt.character.setOnLongClickListener { launchUI { replaceWithNext(it as TextView, i) }; true }
+        }
         val scale = context.resources.displayMetrics.density
         val pixels = (76 * scale + 0.5f)
         behavior.peekHeight = pixels.toInt()
     }
 
-    private suspend fun searchText() {
+    private fun replaceWithNext(symbol: TextView, i: Int) {
+        rotate(ocrResult[i], -1)
+        symbol.text = ocrResult[i].first()
+    }
+
+    private suspend fun searchText(text: String, index: Int = 0) {
         behavior.state = STATE_EXPANDED
         val imm: InputMethodManager = context.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(binding.root.windowToken, 0)
-        val text = binding.ocrResultText.text.toString()
-        val result = db.entryOptimizedDao().findByName(text[0].toString() + "%")
+        val result = db.entryOptimizedDao().findByName(text[index].toString() + "%")
         binding.entriesLayout.removeAllViews()
-        populateResults(rankResults(getMatchedEntries(text, 0, result)))
+        populateResults(rankResults(getMatchedEntries(text, index, result)))
     }
 
     @SuppressLint("SetTextI18n")
     private fun populateResults(results: List<EntryOptimized>) {
         binding.dictResults.isVisible = results.isNotEmpty()
         binding.dictNoResults.isVisible = results.isEmpty()
-
         for (result: EntryOptimized in results) {
             if (result.dictionary == "JMDICT") {
                 val entry = DictionaryEntryBinding.inflate(layoutInflater, binding.entriesLayout, true)
                 entry.dictionaryWord.text = result.kanji
                 entry.dictionaryReading.text = """(${result.readings})"""
                 entry.dictionaryMeaning.text = """ • ${result.meanings!!.replace("￼", "\n • ")}"""
+                entry.addToAnki.setOnClickListener {
+                    if (context.checkSelfPermission(READ_WRITE_PERMISSION) != PERMISSION_GRANTED) {
+                        return@setOnClickListener Toast.makeText(context, "You must setup anki integration in the settings first", Toast.LENGTH_SHORT).show()
+                    }
+                    AddContentApi.getAnkiDroidPackageName(context)
+                        ?: return@setOnClickListener Toast.makeText(context, "Couldn't find ankiDroid", Toast.LENGTH_SHORT).show()
+                    val pref = PreferencesHelper(context)
+                    val api = AddContentApi(context)
+                    val deckName = pref.ankiDeckName().get()
+                    val modelName = pref.ankiModelName().get()
+                    val deck = api.deckList.entries.firstOrNull { it.value == deckName }
+                        ?: return@setOnClickListener Toast.makeText(context, "Deck '$deckName' was not found", Toast.LENGTH_SHORT).show()
+                    val model = api.modelList.entries.firstOrNull { it.value == modelName }
+                        ?: return@setOnClickListener Toast.makeText(context, "Note type '$modelName' was not found", Toast.LENGTH_SHORT).show()
+
+                    val sentenceFields = pref.ankiSentenceExportFields()
+                    val wordFields = pref.ankiWordExportFields()
+                    val readingFields = pref.ankiReadingExportFields()
+                    val meaningFields = pref.ankiMeaningExportFields()
+
+                    val fields = api.getFieldList(model.key).map {
+                        var content = arrayOf<String>()
+                        if (sentenceFields.contains(it)) {
+                            content += ocrResultText
+                        }
+                        if (wordFields.contains(it)) {
+                            content += result.kanji ?: ""
+                        }
+                        if (readingFields.contains(it)) {
+                            content += result.readings ?: ""
+                        }
+                        if (meaningFields.contains(it)) {
+                            content += entry.dictionaryMeaning.text.toString()
+                        }
+                        content.joinToString("\n")
+                    }
+                    api.addNote(model.key, deck.key, fields.toTypedArray(), null)
+                    Toast.makeText(context, "Card added successfully!", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

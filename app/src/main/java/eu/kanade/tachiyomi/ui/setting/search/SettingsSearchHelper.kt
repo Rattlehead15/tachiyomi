@@ -7,16 +7,7 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceGroup
 import androidx.preference.PreferenceManager
-import eu.kanade.tachiyomi.ui.setting.SettingsAdvancedController
-import eu.kanade.tachiyomi.ui.setting.SettingsBackupController
-import eu.kanade.tachiyomi.ui.setting.SettingsBrowseController
-import eu.kanade.tachiyomi.ui.setting.SettingsController
-import eu.kanade.tachiyomi.ui.setting.SettingsDownloadController
-import eu.kanade.tachiyomi.ui.setting.SettingsGeneralController
-import eu.kanade.tachiyomi.ui.setting.SettingsLibraryController
-import eu.kanade.tachiyomi.ui.setting.SettingsReaderController
-import eu.kanade.tachiyomi.ui.setting.SettingsSecurityController
-import eu.kanade.tachiyomi.ui.setting.SettingsTrackingController
+import eu.kanade.tachiyomi.ui.setting.*
 import eu.kanade.tachiyomi.util.lang.launchNow
 import eu.kanade.tachiyomi.util.system.isLTR
 import kotlin.reflect.KClass
@@ -35,6 +26,7 @@ object SettingsSearchHelper {
         SettingsDownloadController::class,
         SettingsGeneralController::class,
         SettingsLibraryController::class,
+        SettingsOCRController::class,
         SettingsReaderController::class,
         SettingsSecurityController::class,
         SettingsTrackingController::class

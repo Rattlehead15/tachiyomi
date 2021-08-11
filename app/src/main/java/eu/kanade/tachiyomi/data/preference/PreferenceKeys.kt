@@ -220,6 +220,18 @@ object PreferenceKeys {
 
     const val incognitoMode = "incognito_mode"
 
+    const val ankiDeckName = "anki_deck_name"
+
+    const val ankiModelName = "anki_model_name"
+
+    const val ankiSentenceExportFields = "anki_sentence_export_fields"
+
+    const val ankiWordExportFields = "anki_word_export_fields"
+
+    const val ankiReadingExportFields = "anki_reading_export_fields"
+
+    const val ankiMeaningExportFields = "anki_meaning_export_fields"
+
     fun trackUsername(syncId: Int) = "pref_mangasync_username_$syncId"
 
     fun trackPassword(syncId: Int) = "pref_mangasync_password_$syncId"

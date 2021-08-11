@@ -2,9 +2,10 @@ package eu.kanade.tachiyomi.ui.reader.translator
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Rect
 import com.googlecode.tesseract.android.TessBaseAPI
-import com.googlecode.tesseract.android.TessBaseAPI.PageIteratorLevel.RIL_BLOCK
+import com.googlecode.tesseract.android.TessBaseAPI.PageIteratorLevel.RIL_SYMBOL
+import com.googlecode.tesseract.android.TessBaseAPI.VAR_SAVE_BLOB_CHOICES
+import com.googlecode.tesseract.android.TessBaseAPI.VAR_TRUE
 import java.io.*
 
 class OCRManager(context: Context) {
@@ -18,7 +19,10 @@ class OCRManager(context: Context) {
             copyAssetFolderToFolder(context, "tessdata", tessdata)
         }
         api = TessBaseAPI()
-        api.init(dir.path, "jpn_vert", TessBaseAPI.OEM_LSTM_ONLY)
+        api.init(dir.path + "/", "jpn", TessBaseAPI.OEM_LSTM_ONLY)
+        api.setDebug(true)
+        api.setVariable(VAR_SAVE_BLOB_CHOICES, VAR_TRUE)
+        api.setVariable("lstm_choice_mode", "2")
     }
 
     private fun copyAssetFolderToFolder(activity: Context, assetsFolder: String, destinationFolder: File?) {
@@ -42,16 +46,15 @@ class OCRManager(context: Context) {
         }
     }
 
-    fun recognize(b: Bitmap): OCRResult {
-        api.pageSegMode = TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK_VERT_TEXT
+    fun recognize(b: Bitmap): List<List<String>> {
+        api.pageSegMode = if (b.width > b.height) TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK else TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK_VERT_TEXT
         api.setImage(b)
-        val result = OCRResult(api.utF8Text, ArrayList())
+        api.getHOCRText(0)
+        val result = mutableListOf<List<String>>()
         val iterator = api.resultIterator
-        while (iterator.next(RIL_BLOCK))
-            result.blocks.add(OCRBlock(iterator.getUTF8Text(RIL_BLOCK), iterator.getBoundingRect(RIL_BLOCK)))
+        do
+            result.add(iterator.symbolChoicesAndConfidence.map { it.first })
+        while (iterator.next(RIL_SYMBOL))
         return result
     }
-
-    data class OCRBlock(val text: String, val box: Rect)
-    data class OCRResult(val text: String, val blocks: ArrayList<OCRBlock>)
 }

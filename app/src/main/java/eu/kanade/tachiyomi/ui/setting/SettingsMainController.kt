@@ -1,11 +1,14 @@
 package eu.kanade.tachiyomi.ui.setting
 
+import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
 import androidx.appcompat.widget.SearchView
 import androidx.preference.PreferenceScreen
+import com.ichi2.anki.api.AddContentApi.READ_WRITE_PERMISSION
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.base.controller.requestPermissionsSafe
 import eu.kanade.tachiyomi.ui.base.controller.withFadeTransaction
 import eu.kanade.tachiyomi.ui.setting.search.SettingsSearchController
 import eu.kanade.tachiyomi.util.preference.iconRes
@@ -71,6 +74,18 @@ class SettingsMainController : SettingsController() {
             onClick { navigateTo(SettingsSecurityController()) }
         }
         preference {
+            iconRes = R.drawable.ic_view_module_24dp
+            iconTint = tintColor
+            titleRes = R.string.pref_category_ocr
+            onClick {
+                if (context.checkSelfPermission(READ_WRITE_PERMISSION) != PERMISSION_GRANTED) {
+                    requestPermissionsSafe(arrayOf(READ_WRITE_PERMISSION), 444)
+                } else {
+                    navigateTo(SettingsOCRController())
+                }
+            }
+        }
+        preference {
             iconRes = R.drawable.ic_code_24dp
             iconTint = tintColor
             titleRes = R.string.pref_category_advanced
@@ -107,5 +122,11 @@ class SettingsMainController : SettingsController() {
                 }
             }
         )
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        if (requestCode == 444 && grantResults[0] == PERMISSION_GRANTED) {
+            navigateTo(SettingsOCRController())
+        }
     }
 }

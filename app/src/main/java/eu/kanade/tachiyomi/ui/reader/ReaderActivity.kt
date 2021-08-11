@@ -27,11 +27,7 @@ import android.view.animation.AnimationUtils
 import android.widget.SeekBar
 import android.widget.Toast
 import androidx.core.graphics.ColorUtils
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.core.view.isInvisible
-import androidx.core.view.isVisible
+import androidx.core.view.*
 import androidx.lifecycle.lifecycleScope
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.google.android.material.shape.MaterialShapeDrawable
@@ -55,14 +51,16 @@ import eu.kanade.tachiyomi.ui.reader.ReaderPresenter.SetAsCoverResult.Success
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
-import eu.kanade.tachiyomi.ui.reader.translator.OCRManager
-import eu.kanade.tachiyomi.ui.reader.translator.OCRRectangleView
-import eu.kanade.tachiyomi.ui.reader.translator.OCRTranslationSheet
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsSheet
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.translator.OCRManager
+import eu.kanade.tachiyomi.ui.reader.translator.OCRRectangleView
+import eu.kanade.tachiyomi.ui.reader.translator.OCRTranslationSheet
 import eu.kanade.tachiyomi.ui.reader.viewer.BaseViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.util.lang.launchIO
+import eu.kanade.tachiyomi.util.lang.launchUI
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.GLUtil
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
@@ -251,7 +249,7 @@ class ReaderActivity : BaseRxActivity<ReaderActivityBinding, ReaderPresenter>() 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.action_dictionary -> {
-                OCRTranslationSheet(this, "").show()
+                OCRTranslationSheet(this).show()
             }
             R.id.action_ocr -> {
                 getOCRRect()
@@ -290,7 +288,7 @@ class ReaderActivity : BaseRxActivity<ReaderActivityBinding, ReaderPresenter>() 
         val ocrManager = OCRManager(applicationContext)
         val result = ocrManager.recognize(b)
         val activity = this
-        launchUI { OCRTranslationSheet(activity, result.text).show() }
+        launchUI { OCRTranslationSheet(activity, result).show() }
     }
 
     /**

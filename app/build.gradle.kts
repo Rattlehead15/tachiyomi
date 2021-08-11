@@ -9,6 +9,7 @@ plugins {
     id("com.mikepenz.aboutlibraries.plugin")
     kotlin("android")
     kotlin("plugin.serialization")
+    kotlin("kapt")
     id("com.github.zellius.shortcut-helper")
 }
 
@@ -38,7 +39,7 @@ android {
         buildConfigField("boolean", "INCLUDE_UPDATER", "false")
 
         // Please disable ACRA or use your own instance in forked versions of the project
-        buildConfigField("String", "ACRA_URI", "\"https://tachiyomi.kanade.eu/crash_report\"")
+//        buildConfigField("String", "ACRA_URI", "\"https://tachiyomi.kanade.eu/crash_report\"")
 
         ndk {
             abiFilters += SUPPORTED_ABIS
@@ -272,13 +273,13 @@ dependencies {
 //    debugImplementation("com.squareup.leakcanary:leakcanary-android:2.4")
 
     // OCR
-    implementation("cz.adaptech.android:tesseract4android:2.1.0")
-    implementation("androidx.room:room-runtime:2.2.6")
-    kapt("androidx.room:room-compiler:2.2.6")
-    // optional - Kotlin Extensions and Coroutines support for Room
-    implementation("androidx.room:room-ktx:2.2.6")
+    implementation("cz.adaptech:tesseract4android:3.0.0")
+    implementation("androidx.room:room-runtime:2.3.0")
+    kapt("androidx.room:room-compiler:2.3.0")
+    implementation("androidx.room:room-ktx:2.3.0")
     implementation("com.github.rattlehead15:kaku:master-SNAPSHOT")
     implementation("com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava")
+    implementation("com.github.ankidroid:Anki-Android:api-v1.1.0")
 }
 
 tasks {

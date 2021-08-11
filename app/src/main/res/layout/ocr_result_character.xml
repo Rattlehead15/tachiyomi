@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/character"
+    android:layout_width="50dp"
+    android:layout_height="50dp"
+    android:layout_weight="1"
+    android:background="?android:selectableItemBackgroundBorderless"
+    android:gravity="center"
+    android:visibility="visible"
+    app:autoSizeTextType="uniform"
+    tools:showIn="@layout/ocr_translation_sheet"
+    tools:text="難" />

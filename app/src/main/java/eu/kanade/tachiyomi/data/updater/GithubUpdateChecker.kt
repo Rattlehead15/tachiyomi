@@ -41,14 +41,16 @@ class GithubUpdateChecker {
         // Removes prefixes like "r" or "v"
         val newVersion = versionTag.replace("[^\\d.]".toRegex(), "")
 
-        return if (BuildConfig.DEBUG) {
-            // Preview builds: based on releases in "tachiyomiorg/tachiyomi-preview" repo
-            // tagged as something like "r1234"
-            newVersion.toInt() > BuildConfig.COMMIT_COUNT.toInt()
-        } else {
-            // Release builds: based on releases in "tachiyomiorg/tachiyomi" repo
-            // tagged as something like "v0.1.2"
-            newVersion != BuildConfig.VERSION_NAME
-        }
+        return newVersion != BuildConfig.VERSION_NAME
+
+//        return if (BuildConfig.DEBUG) {
+//            // Preview builds: based on releases in "tachiyomiorg/tachiyomi-preview" repo
+//            // tagged as something like "r1234"
+//            newVersion.toInt() > BuildConfig.COMMIT_COUNT.toInt()
+//        } else {
+//            // Release builds: based on releases in "tachiyomiorg/tachiyomi" repo
+//            // tagged as something like "v0.1.2"
+//            newVersion != BuildConfig.VERSION_NAME
+//        }
     }
 }

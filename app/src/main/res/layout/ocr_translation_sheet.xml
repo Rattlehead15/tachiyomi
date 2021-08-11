@@ -7,26 +7,47 @@
     android:orientation="vertical"
     android:padding="16dp">
 
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp">
+
+        <LinearLayout
+            android:id="@+id/ocrCharacters"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal">
+
+            <include
+                layout="@layout/ocr_result_character"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+        </LinearLayout>
+    </HorizontalScrollView>
+
     <TableRow
         android:layout_width="match_parent"
         android:layout_height="60dp"
         android:layout_marginBottom="8dp"
-        android:gravity="center">
+        android:gravity="center"
+        android:visibility="visible">
 
         <EditText
-            android:id="@+id/ocrResultText"
+            android:id="@+id/lookupText"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_weight="1"
             android:hint="@string/dict_search"
             android:importantForAutofill="no"
             android:inputType="text"
-            android:textSize="24sp" />
+            android:textSize="24sp"
+            tools:ignore="TextContrastCheck" />
 
         <ImageButton
-            android:id="@+id/searchOCRResult"
+            android:id="@+id/lookupButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:contentDescription="@string/action_search"
             app:srcCompat="@drawable/ic_search_24dp" />
 

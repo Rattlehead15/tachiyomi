@@ -771,5 +771,15 @@
     <string name="dict_search">Look up a word</string>
     <string name="action_dictionary">Open Dictionary</string>
     <string name="dict_no_results">Either there were no results, or you haven\'t searched anything</string>
+    <string name="add_word_to_anki">Add word to Anki</string>
+    <string name="pref_category_ocr">Tachiyomi OCR</string>
+    <string name="anki">Anki integration</string>
+    <string name="anki_field_sentence">OCR\'d Sentence</string>
+    <string name="anki_field_word">Target Word</string>
+    <string name="anki_field_reading">Kana Reading</string>
+    <string name="anki_field_meaning">Definition</string>
+    <string name="pref_anki_deck_name">Anki Export Deck</string>
+    <string name="pref_anki_model_name">Anki Export Note Type</string>
+    <string name="anki_fields_routing">Export Field Routing</string>
 
 </resources>

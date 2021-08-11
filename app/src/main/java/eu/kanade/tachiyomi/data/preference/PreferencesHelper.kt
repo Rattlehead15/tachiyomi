@@ -322,4 +322,16 @@ class PreferencesHelper(val context: Context) {
             putInt(Keys.defaultChapterSortByAscendingOrDescending, if (manga.sortDescending()) Manga.CHAPTER_SORT_DESC else Manga.CHAPTER_SORT_ASC)
         }
     }
+
+    fun ankiDeckName() = flowPrefs.getString(Keys.ankiDeckName, "")
+
+    fun ankiModelName() = flowPrefs.getString(Keys.ankiModelName, "")
+
+    fun ankiSentenceExportFields() = prefs.getStringSet(Keys.ankiSentenceExportFields, setOf())!!
+
+    fun ankiWordExportFields() = prefs.getStringSet(Keys.ankiWordExportFields, setOf())!!
+
+    fun ankiReadingExportFields() = prefs.getStringSet(Keys.ankiReadingExportFields, setOf())!!
+
+    fun ankiMeaningExportFields() = prefs.getStringSet(Keys.ankiMeaningExportFields, setOf())!!
 }
