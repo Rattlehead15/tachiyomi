@@ -13,18 +13,18 @@ This is a fork of the popular manga reader Tachiyomi, which adds OCR and Diction
 Tachiyomi OCR adds two new buttons in the reader menu, the dictionary button and the OCR button.
  - The dictionary button is straightforward, it opens up the dictionary and you can look up any word you want.
  - When the OCR button is pressed, you will be prompted to select the region of the screen which contains the word you want to look for. Once the region is selected, long press the OCR rectangle to scan the word and look it up in the dictionary
+ - Dictionary entries have an Anki button in the upper right corner. If you set up your card export correctly in the settings, this button can be pressed to export the word definitions to ankiDroid
 
 ## Planned features
-
-* Anki export support
 * Hiragana word lookup (currently only words written in kanji work)
-* Support for horizontal text, dark backgrounds and other languages
+* Support for other languages (japanese-only at the moment)
 
 If you would like to see these features added consider [supporting me](https://ko-fi.com/rattlehead15)!
 
 ## Special thanks to
  * The tachiyomi devs for, well almost everything
  * The [Kaku](https://github.com/0xbad1d3a5/Kaku) devs for the deinflection code and various design ideas. Definitely recommend Kaku for OCR outside of Tachiyomi
+ * [Flaticon](flaticon.com) for the ocr and dictionary icons
 
 # ![app icon](./.github/readme-images/app-icon.png)Tachiyomi
 Tachiyomi is a free and open source manga reader for Android 6.0 and above.

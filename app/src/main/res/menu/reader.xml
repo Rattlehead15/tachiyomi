@@ -4,13 +4,13 @@
 
     <item
         android:id="@+id/action_dictionary"
-        android:icon="@drawable/ic_book_24dp"
+        android:icon="@drawable/ic_translation"
         android:title="@string/action_dictionary"
         app:iconTint="?attr/colorOnPrimary"
         app:showAsAction="ifRoom" />
     <item
         android:id="@+id/action_ocr"
-        android:icon="@drawable/ic_select_all_24dp"
+        android:icon="@drawable/ic_ocr"
         android:title="@string/action_ocr"
         app:iconTint="?attr/colorOnPrimary"
         app:showAsAction="ifRoom" />
