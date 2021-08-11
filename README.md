@@ -24,7 +24,7 @@ If you would like to see these features added consider [supporting me](https://k
 ## Special thanks to
  * The tachiyomi devs for, well almost everything
  * The [Kaku](https://github.com/0xbad1d3a5/Kaku) devs for the deinflection code and various design ideas. Definitely recommend Kaku for OCR outside of Tachiyomi
- * [Flaticon](flaticon.com) for the ocr and dictionary icons
+ * [Flaticon](https://flaticon.com) for the ocr and dictionary icons
 
 # ![app icon](./.github/readme-images/app-icon.png)Tachiyomi
 Tachiyomi is a free and open source manga reader for Android 6.0 and above.
