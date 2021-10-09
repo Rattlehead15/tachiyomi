@@ -2,10 +2,14 @@ package eu.kanade.tachiyomi.ui.reader.translator
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Environment.getExternalStorageDirectory
+import android.os.Handler
+import android.os.Looper
 import android.view.inputmethod.InputMethodManager
 import android.widget.TextView
 import android.widget.Toast
@@ -33,6 +37,7 @@ import java.io.InputStream
 import java.net.URL
 import java.net.URLConnection
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
 import java.util.*
 import java.util.Collections.rotate
 import java.util.concurrent.Executors
@@ -77,7 +82,7 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
         populateResults(rankResults(getMatchedEntries(text, index, result)))
     }
 
-    private fun pickReading(readings: String): String{
+    private fun pickReading(readings: String): String {
         return if (readings.contains(",")) {
             readings.substring(0, readings.indexOf(","))
         } else {
@@ -85,7 +90,7 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
         }
     }
 
-    private fun downloadAudio(reading: String, kanji: String, file: File){
+    private fun downloadAudio(reading: String, kanji: String, file: File) {
         try {
             val url = "https://assets.languagepod101.com/dictionary/japanese/audiomp3.php?kanji=%s&kana=%s".format(URLEncoder.encode(kanji, "utf-8"), URLEncoder.encode(reading, "utf-8"))
             val cn: URLConnection = URL(url).openConnection()
@@ -110,7 +115,7 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
         val audioFile = File(context.cacheDir, "file.mp3")
         downloadAudio(reading, kanji, audioFile)
         if (audioFile.length() != 52288L) { // The audio file with this length is a spoken 404 not found message
-            val mediaPlayer = MediaPlayer().apply {
+            MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -124,7 +129,12 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
         }
     }
 
-    @SuppressLint("SetTextI18n")
+    private fun createToast(context: Context?, text: String?) {
+        val handler = Handler(Looper.getMainLooper())
+        handler.post { Toast.makeText(context, text, Toast.LENGTH_LONG).show() }
+    }
+
+    @SuppressLint("SetTextI18n", "DirectDateInstantiation")
     private fun populateResults(results: List<EntryOptimized>) {
         binding.dictResults.isVisible = results.isNotEmpty()
         binding.dictNoResults.isVisible = results.isEmpty()
@@ -135,11 +145,7 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
                 entry.dictionaryReading.text = """(${result.readings})"""
                 entry.dictionaryMeaning.text = """ • ${result.meanings!!.replace("￼", "\n • ")}"""
                 entry.playAudio.setOnClickListener {
-                    Executors.newSingleThreadExecutor().submit(
-                        Runnable {
-                            playAudio(result.readings.toString(), result.kanji.toString())
-                        }
-                    )
+                    Executors.newSingleThreadExecutor().submit { playAudio(result.readings.toString(), result.kanji.toString()) }
                 }
                 entry.addToAnki.setOnClickListener {
                     if (context.checkSelfPermission(READ_WRITE_PERMISSION) != PERMISSION_GRANTED) {
@@ -160,25 +166,41 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
                     val wordFields = pref.ankiWordExportFields()
                     val readingFields = pref.ankiReadingExportFields()
                     val meaningFields = pref.ankiMeaningExportFields()
-
-                    val fields = api.getFieldList(model.key).map {
-                        var content = arrayOf<String>()
-                        if (sentenceFields.contains(it)) {
-                            content += ocrResultText
+                    val audioFields = pref.ankiAudioExportFields()
+                    Executors.newSingleThreadExecutor().submit {
+                        val fields = api.getFieldList(model.key).map {
+                            var content = arrayOf<String>()
+                            if (sentenceFields.contains(it)) {
+                                content += ocrResultText
+                            }
+                            if (wordFields.contains(it)) {
+                                content += result.kanji ?: ""
+                            }
+                            if (readingFields.contains(it)) {
+                                content += result.readings ?: ""
+                            }
+                            if (meaningFields.contains(it)) {
+                                content += entry.dictionaryMeaning.text.toString()
+                            }
+                            if (audioFields.contains(it)) {
+                                val filename: String = "A_" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.getDefault()).format(Date()) + ".mp3"
+                                val collectionPath = File(getExternalStorageDirectory().absolutePath.toString() + "/AnkiDroid/collection.media/")
+                                if (!collectionPath.exists()) {
+                                    collectionPath.mkdirs()
+                                }
+                                val audioFile = File(collectionPath, filename)
+                                downloadAudio(pickReading(result.readings.toString()), result.kanji.toString(), audioFile)
+                                if (audioFile.length() != 52288L) { // The audio file with this length is a spoken 404 not found message
+                                    content += "[sound:$filename]"
+                                } else {
+                                    audioFile.delete()
+                                }
+                            }
+                            content.joinToString("\n")
                         }
-                        if (wordFields.contains(it)) {
-                            content += result.kanji ?: ""
-                        }
-                        if (readingFields.contains(it)) {
-                            content += result.readings ?: ""
-                        }
-                        if (meaningFields.contains(it)) {
-                            content += entry.dictionaryMeaning.text.toString()
-                        }
-                        content.joinToString("\n")
+                        api.addNote(model.key, deck.key, fields.toTypedArray(), null)
+                        createToast(context, "Card added successfully!")
                     }
-                    api.addNote(model.key, deck.key, fields.toTypedArray(), null)
-                    Toast.makeText(context, "Card added successfully!", Toast.LENGTH_SHORT).show()
                 }
             }
         }
