@@ -77,21 +77,22 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
         populateResults(rankResults(getMatchedEntries(text, index, result)))
     }
 
-    private fun playAudio(readings: String, kanji: String) {
-        val reading: String = if (readings.contains(",")) {
+    private fun pickReading(readings: String): String{
+        return if (readings.contains(",")) {
             readings.substring(0, readings.indexOf(","))
         } else {
             readings
         }
+    }
 
-        val audioFile = File(context.cacheDir, "file.mp3")
+    private fun downloadAudio(reading: String, kanji: String, file: File){
         try {
             val url = "https://assets.languagepod101.com/dictionary/japanese/audiomp3.php?kanji=%s&kana=%s".format(URLEncoder.encode(kanji, "utf-8"), URLEncoder.encode(reading, "utf-8"))
             val cn: URLConnection = URL(url).openConnection()
             cn.connect()
             val stream: InputStream = cn.getInputStream()
             BufferedInputStream(stream).use { `in` ->
-                FileOutputStream(audioFile).use { fileOutputStream ->
+                FileOutputStream(file).use { fileOutputStream ->
                     val dataBuffer = ByteArray(1024)
                     var bytesRead: Int
                     while (`in`.read(dataBuffer, 0, 1024).also { bytesRead = it } != -1) {
@@ -102,6 +103,12 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
         } catch (e: IOException) {
             Timber.e(e.toString())
         }
+    }
+
+    private fun playAudio(readings: String, kanji: String) {
+        val reading = pickReading(readings)
+        val audioFile = File(context.cacheDir, "file.mp3")
+        downloadAudio(reading, kanji, audioFile)
         if (audioFile.length() != 52288L) { // The audio file with this length is a spoken 404 not found message
             val mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
