@@ -3,6 +3,9 @@ package eu.kanade.tachiyomi.ui.reader.translator
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.pm.PackageManager.PERMISSION_GRANTED
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.net.Uri
 import android.view.inputmethod.InputMethodManager
 import android.widget.TextView
 import android.widget.Toast
@@ -21,8 +24,18 @@ import eu.kanade.tachiyomi.databinding.DictionaryEntryBinding
 import eu.kanade.tachiyomi.databinding.OcrResultCharacterBinding
 import eu.kanade.tachiyomi.databinding.OcrTranslationSheetBinding
 import eu.kanade.tachiyomi.util.lang.launchUI
+import timber.log.Timber
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.InputStream
+import java.net.URL
+import java.net.URLConnection
+import java.net.URLEncoder
 import java.util.*
 import java.util.Collections.rotate
+import java.util.concurrent.Executors
 import kotlin.collections.HashSet
 
 class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<String>> = listOf()) : BottomSheetDialog(activity) {
@@ -64,6 +77,46 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
         populateResults(rankResults(getMatchedEntries(text, index, result)))
     }
 
+    private fun playAudio(readings: String, kanji: String) {
+        val reading: String = if (readings.contains(",")) {
+            readings.substring(0, readings.indexOf(","))
+        } else {
+            readings
+        }
+
+        val audioFile = File(context.cacheDir, "file.mp3")
+        try {
+            val url = "https://assets.languagepod101.com/dictionary/japanese/audiomp3.php?kanji=%s&kana=%s".format(URLEncoder.encode(kanji, "utf-8"), URLEncoder.encode(reading, "utf-8"))
+            val cn: URLConnection = URL(url).openConnection()
+            cn.connect()
+            val stream: InputStream = cn.getInputStream()
+            BufferedInputStream(stream).use { `in` ->
+                FileOutputStream(audioFile).use { fileOutputStream ->
+                    val dataBuffer = ByteArray(1024)
+                    var bytesRead: Int
+                    while (`in`.read(dataBuffer, 0, 1024).also { bytesRead = it } != -1) {
+                        fileOutputStream.write(dataBuffer, 0, bytesRead)
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            Timber.e(e.toString())
+        }
+        if (audioFile.length() != 52288L) { // The audio file with this length is a spoken 404 not found message
+            val mediaPlayer = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                setDataSource(context, Uri.parse(context.cacheDir.toString() + "/file.mp3"))
+                prepare()
+                start()
+            }
+        }
+    }
+
     @SuppressLint("SetTextI18n")
     private fun populateResults(results: List<EntryOptimized>) {
         binding.dictResults.isVisible = results.isNotEmpty()
@@ -74,6 +127,13 @@ class OCRTranslationSheet(activity: Activity, private val ocrResult: List<List<S
                 entry.dictionaryWord.text = result.kanji
                 entry.dictionaryReading.text = """(${result.readings})"""
                 entry.dictionaryMeaning.text = """ • ${result.meanings!!.replace("￼", "\n • ")}"""
+                entry.playAudio.setOnClickListener {
+                    Executors.newSingleThreadExecutor().submit(
+                        Runnable {
+                            playAudio(result.readings.toString(), result.kanji.toString())
+                        }
+                    )
+                }
                 entry.addToAnki.setOnClickListener {
                     if (context.checkSelfPermission(READ_WRITE_PERMISSION) != PERMISSION_GRANTED) {
                         return@setOnClickListener Toast.makeText(context, "You must setup anki integration in the settings first", Toast.LENGTH_SHORT).show()
