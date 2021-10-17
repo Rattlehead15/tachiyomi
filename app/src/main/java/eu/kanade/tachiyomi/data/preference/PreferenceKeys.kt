@@ -232,6 +232,8 @@ object PreferenceKeys {
 
     const val ankiMeaningExportFields = "anki_meaning_export_fields"
 
+    const val ankiAudioExportFields = "anki_audio_export_fields"
+
     fun trackUsername(syncId: Int) = "pref_mangasync_username_$syncId"
 
     fun trackPassword(syncId: Int) = "pref_mangasync_password_$syncId"

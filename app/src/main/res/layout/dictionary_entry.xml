@@ -19,7 +19,7 @@
             android:gravity="center_vertical">
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="184dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:orientation="horizontal">
@@ -40,12 +40,28 @@
                     tools:text="(さがす)" />
             </LinearLayout>
 
+            <ImageView
+                android:id="@+id/play_audio"
+                style="@style/Widget.AppCompat.ImageButton"
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:layout_marginRight="20dp"
+                android:layout_weight="0.4"
+                android:background="?android:selectableItemBackgroundBorderless"
+                android:padding="0dp"
+                android:scaleType="center"
+                android:scaleX="1.3"
+                android:scaleY="1.3"
+                android:tint="#000000"
+                app:srcCompat="@drawable/ic_baseline_volume_up_24" />
+
             <ImageButton
                 android:id="@+id/add_to_anki"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="?android:selectableItemBackgroundBorderless"
                 android:contentDescription="@string/add_word_to_anki"
+                android:paddingEnd="10dp"
                 app:srcCompat="@drawable/ic_anki_icon" />
 
         </LinearLayout>
